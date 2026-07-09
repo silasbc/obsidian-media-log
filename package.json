@@ -1,0 +1,13 @@
+{
+  "name": "media-log",
+  "version": "0.1.0",
+  "description": "Media Log plugin for Obsidian — save links as durable Markdown media items and browse them as a gallery.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --format=cjs --platform=node --target=es2020 --external:obsidian --external:electron --outfile=main.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

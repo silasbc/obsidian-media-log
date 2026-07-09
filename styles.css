@@ -1,0 +1,65 @@
+/* Media Log — scoped under .mlog; native Obsidian variables only. */
+
+.mlog { padding: 0.5rem 0.75rem 1.5rem; }
+.mlog__header { display: flex; align-items: baseline; gap: 0.75rem; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 0.5rem; }
+.mlog__title { margin: 0; font-size: 1.15rem; flex: 0 0 auto; }
+.mlog__count { color: var(--text-muted); font-size: 0.85rem; flex: 1; }
+
+.mlog__filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.6rem 0; }
+.mlog__filters input[type="search"] { flex: 1; min-width: 160px; }
+
+.mlog__body { display: flex; gap: 1rem; align-items: flex-start; }
+.mlog__grid {
+  flex: 1.6;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.6rem;
+  min-width: 0;
+}
+.mlog__detail { flex: 1; min-width: 220px; position: sticky; top: 0; }
+@media (max-width: 700px) {
+  .mlog__body { flex-direction: column; }
+  .mlog__detail { position: static; width: 100%; }
+}
+
+.mlog-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--background-secondary);
+  cursor: pointer;
+}
+.mlog-card--selected { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
+.mlog-card__thumb { aspect-ratio: 16/10; background: var(--background-modifier-hover); display: flex; align-items: center; justify-content: center; }
+.mlog-card__thumb img { width: 100%; height: 100%; object-fit: cover; }
+.mlog-card__placeholder { color: var(--text-faint); font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.mlog-card__body { padding: 0.45rem 0.55rem 0.55rem; }
+.mlog-card__title { font-size: 0.85rem; font-weight: 500; line-height: 1.25; max-height: 2.6em; overflow: hidden; overflow-wrap: anywhere; }
+.mlog-card__meta { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: baseline; margin-top: 4px; font-size: 0.72rem; color: var(--text-muted); }
+.mlog-card__date { margin-left: auto; }
+
+.mlog-chip {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 1.6;
+}
+.mlog-chip--tag { display: inline-flex; align-items: center; gap: 3px; }
+.mlog-chip__x { cursor: pointer; opacity: 0.6; }
+.mlog-chip__x:hover { opacity: 1; }
+
+.mlog-detail__img { width: 100%; border-radius: 10px; cursor: zoom-in; }
+.mlog-detail__meta { display: flex; gap: 0.5rem; flex-wrap: wrap; color: var(--text-muted); font-size: 0.82rem; margin-bottom: 0.5rem; }
+.mlog-detail__tags { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; margin: 0.4rem 0 0.7rem; }
+.mlog-detail__taginput { width: 90px; font-size: 0.75rem; padding: 1px 6px; }
+.mlog-detail__actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.mlog-detail__delete { color: var(--text-error, var(--color-red)); }
+
+.mlog__empty { border: 1px dashed var(--background-modifier-border); border-radius: 10px; padding: 1.5rem; text-align: center; grid-column: 1 / -1; }
+.mlog__empty-sub { color: var(--text-muted); font-size: 0.82rem; margin-top: 4px; }
+
+.mlog-modal__input { width: 100%; margin-bottom: 0.5rem; }
+.mlog-modal__row { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
+.mlog-modal__status { min-height: 1.2em; color: var(--text-muted); font-size: 0.85rem; }
