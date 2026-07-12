@@ -108,6 +108,9 @@ module.exports = class MediaLogPlugin extends Plugin {
       const cache = this.app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter;
       if (!fm || !fm.media_id) continue;
+      const capturedAt = String(fm.captured_at || "");
+      const idStamp = String(fm.media_id).match(/(\d{8}-\d{6})/)?.[1] || "";
+      const sortKey = /^\d{4}-\d{2}-\d{2}/.test(capturedAt) ? capturedAt.replace(/[^0-9]/g, "") : idStamp.replace(/[^0-9]/g, "");
       items.push({
         file,
         id: fm.media_id,
@@ -115,12 +118,13 @@ module.exports = class MediaLogPlugin extends Plugin {
         title: fm.title || file.basename,
         creator: fm.creator || "",
         sourceUrl: fm.source_url || "",
-        capturedAt: fm.captured_at || "",
+        capturedAt,
+        sortKey,
         screenshot: fm.screenshot || "",
         tags: Array.isArray(fm.tags) ? fm.tags.map(String) : []
       });
     }
-    items.sort((a, b) => String(b.capturedAt || b.id).localeCompare(String(a.capturedAt || a.id)));
+    items.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
     return items;
   }
   async createItem({ url, title, creator, tags, description, imageUrl }) {
