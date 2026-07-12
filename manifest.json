@@ -1,6 +1,6 @@
 {
   "id": "media-log",
-  "name": "Media Log",
+  "name": "Select Media Log (Public)",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
   "description": "Save links as durable Markdown media items and browse them as a gallery with tags, filters, and a detail pane. Plain files first — every item is a readable note.",
