@@ -101,7 +101,7 @@ module.exports = class MediaLogPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
     this.registerView(VIEW_TYPE, (leaf) => new LibraryView(leaf, this));
-    this.addRibbonIcon("library", "Open Media Log", () => this.activateView());
+    this.addRibbonIcon("library", "Select Media Log (Public)", () => this.activateView());
     this.addCommand({ id: "open-library", name: "Open library", callback: () => this.activateView() });
     this.addCommand({ id: "add-item", name: "Add media item from URL", callback: () => new AddItemModal(this.app, this).open() });
     this.registerObsidianProtocolHandler("media-log", () => this.activateView());

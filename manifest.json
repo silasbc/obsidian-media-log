@@ -1,9 +1,9 @@
 {
   "id": "media-log",
   "name": "Select Media Log (Public)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "Save links as durable Markdown media items and browse them as a gallery with tags, filters, and a detail pane. Plain files first — every item is a readable note.",
+  "description": "Save links as durable Markdown media items and browse them as a gallery with tags, filters, and a detail pane. Plain files first \u2014 every item is a readable note.",
   "author": "Jason Cobb",
   "isDesktopOnly": false
 }
