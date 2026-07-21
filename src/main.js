@@ -104,7 +104,18 @@ module.exports = class MediaLogPlugin extends Plugin {
     this.addRibbonIcon("library", "Open Media Log", () => this.activateView());
     this.addCommand({ id: "open-library", name: "Open library", callback: () => this.activateView() });
     this.addCommand({ id: "add-item", name: "Add media item from URL", callback: () => new AddItemModal(this.app, this).open() });
-    this.registerObsidianProtocolHandler("media-log", () => this.activateView());
+    this.registerObsidianProtocolHandler("media-log", (params) => {
+      if (params && params.url) {
+        new AddItemModal(this.app, this, null, {
+          url: params.url,
+          title: params.title || "",
+          tags: params.tags || "",
+          autosave: params.autosave !== "false",
+        }).open();
+      } else {
+        this.activateView();
+      }
+    });
     this.addSettingTab(new MediaLogSettingTab(this.app, this));
   }
 
@@ -419,10 +430,11 @@ class LibraryView extends ItemView {
 // ---- Add item modal ---------------------------------------------------------
 
 class AddItemModal extends Modal {
-  constructor(app, plugin, onDone) {
+  constructor(app, plugin, onDone, prefill) {
     super(app);
     this.plugin = plugin;
     this.onDone = onDone;
+    this.prefill = prefill || null;
   }
 
   onOpen() {
@@ -436,9 +448,14 @@ class AddItemModal extends Modal {
     const save = row.createEl("button", { cls: "mod-cta", text: "Save" });
     const cancel = row.createEl("button", { text: "Cancel" });
     cancel.addEventListener("click", () => this.close());
+    if (this.prefill) {
+      urlInput.value = this.prefill.url || "";
+      titleInput.value = this.prefill.title || "";
+      tagsInput.value = this.prefill.tags || "";
+    }
     urlInput.focus();
 
-    save.addEventListener("click", async () => {
+    const doSave = async () => {
       const url = urlInput.value.trim();
       if (!url || !/^https?:\/\//i.test(url)) {
         status.setText("Enter a valid http(s) URL.");
@@ -468,7 +485,9 @@ class AddItemModal extends Modal {
         save.disabled = false;
         status.setText(`Failed: ${e.message || e}`);
       }
-    });
+    };
+    save.addEventListener("click", doSave);
+    if (this.prefill && this.prefill.url && this.prefill.autosave) doSave();
   }
 
   onClose() {

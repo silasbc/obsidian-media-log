@@ -28,6 +28,35 @@ status: captured
 
 Notes are yours: rename them, link them, query them with Dataview, or stop using the plugin entirely — the library is just Markdown.
 
+## URL scheme
+
+`obsidian://media-log` opens the library. Pass a `url` parameter to save an item instead:
+
+```
+obsidian://media-log?url=<url-encoded link>
+```
+
+Optional parameters: `title` and `tags` (comma separated) prefill those fields; `autosave=false` opens the Add dialog for review instead of saving immediately; `vault=<name>` targets a specific vault if you have several.
+
+## Saving links from iOS (share sheet shortcut)
+
+Feed links straight from Safari, YouTube, or any app's share sheet using a one-time Shortcuts setup:
+
+1. Open the **Shortcuts** app → **+** to create a new shortcut.
+2. Tap the shortcut's name → **rename** it *Save to Media Log* (this is the name you'll see in the share sheet).
+3. Tap the info button (ⓘ) → enable **Show in Share Sheet**. Under "Receive", limit input types to **URLs** and **Safari web pages**.
+4. Add these actions in order:
+   - **URL Encode** — set its input to **Shortcut Input**.
+   - **URL** — set it to `obsidian://media-log?url=` followed by the **URL Encoded Text** variable (tap the field and pick the variable from the bar above the keyboard).
+   - **Open URLs** (sometimes shown as **Open URL**).
+5. Done. Now share any link → scroll the share sheet → **Save to Media Log**. Obsidian opens, saves the item (fetching title and preview image), and shows a confirmation notice.
+
+Tips:
+
+- If you have more than one vault on the device, use `obsidian://media-log?vault=YourVaultName&url=` in the URL action so it always opens the right one.
+- Prefer to review before saving? Append `&autosave=false` and the Add dialog opens prefilled instead.
+- The same scheme works on macOS — e.g. a Raycast/Alfred script or `open "obsidian://media-log?url=..."` in Terminal.
+
 ## Settings
 
 - **Items folder** (default `Media Log/Items`) — where item notes are created and read from.

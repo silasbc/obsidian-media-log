@@ -1,6 +1,6 @@
 {
   "name": "media-log",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Media Log plugin for Obsidian — save links as durable Markdown media items and browse them as a gallery.",
   "type": "module",
   "scripts": {
