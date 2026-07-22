@@ -66,6 +66,7 @@ Tips:
 ## Notes & limitations
 
 - Metadata fetching uses Obsidian's built-in request API. Some sites (notably X/Twitter and Instagram) return limited metadata without a logged-in session; items still save with the URL and any title you type.
+- Want real browser screenshots, richer metadata, and playable media? The plugin's file format is an open contract — [RUNNER.md](RUNNER.md) is a recipe you can hand to an AI coding agent to build a self-hosted companion runner that feeds the same library.
 - Works on desktop and mobile.
 - The plugin never writes outside the two configured folders, and never deletes permanently — removals go to the vault trash.
 
