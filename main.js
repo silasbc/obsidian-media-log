@@ -15,6 +15,12 @@ var DEFAULT_SETTINGS = {
   assetsFolder: "Media Log/Assets",
   downloadImages: true
 };
+var REVIEW_FILTERS = [
+  { value: "", label: "All items" },
+  { value: "unwatched", label: "Unwatched" },
+  { value: "watched", label: "Watched" },
+  { value: "starred", label: "Starred" }
+];
 var PLATFORMS = [
   { key: "YouTube", hosts: ["youtube.com", "youtu.be"] },
   { key: "X", hosts: ["x.com", "twitter.com"] },
@@ -132,6 +138,10 @@ module.exports = class MediaLogPlugin extends Plugin {
         capturedAt,
         sortKey,
         screenshot: fm.screenshot || "",
+        video: fm.video || "",
+        embedUrl: fm.embed_url || "",
+        watched: fm.watched === true,
+        starred: fm.starred === true,
         tags: Array.isArray(fm.tags) ? fm.tags.map(String) : []
       });
     }
@@ -202,6 +212,14 @@ module.exports = class MediaLogPlugin extends Plugin {
       fm.tags = tags;
     });
   }
+  async updateReviewState(item, field, value) {
+    if (!(/* @__PURE__ */ new Set(["watched", "starred"])).has(field)) return;
+    await this.app.fileManager.processFrontMatter(item.file, (fm) => {
+      if (value) fm[field] = true;
+      else delete fm[field];
+    });
+    item[field] = Boolean(value);
+  }
   async deleteItem(item) {
     await this.app.fileManager.trashFile(item.file);
   }
@@ -210,7 +228,7 @@ var LibraryView = class extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
-    this.filter = { search: "", platform: "", tag: "" };
+    this.filter = { search: "", platform: "", tag: "", review: "" };
     this.selected = null;
   }
   getViewType() {
@@ -263,6 +281,24 @@ var LibraryView = class extends ItemView {
       this.filter.tag = tagSel.value;
       this.renderGrid();
     });
+    const reviewSel = filters.createEl("select");
+    for (const reviewFilter of REVIEW_FILTERS) {
+      const count = reviewFilter.value ? items.filter((item) => this.matchesReview(item, reviewFilter.value)).length : items.length;
+      const opt = reviewSel.createEl("option", {
+        value: reviewFilter.value,
+        text: `${reviewFilter.label} (${count})`
+      });
+      if (reviewFilter.value === this.filter.review) opt.selected = true;
+    }
+    reviewSel.addEventListener("change", () => {
+      this.filter.review = reviewSel.value;
+      this.renderGrid();
+    });
+    const clear = filters.createEl("button", { text: "Clear filters" });
+    clear.addEventListener("click", () => {
+      this.filter = { search: "", platform: "", tag: "", review: "" };
+      this.render();
+    });
     const body = root.createDiv({ cls: "mlog__body" });
     this.gridEl = body.createDiv({ cls: "mlog__grid" });
     this.detailEl = body.createDiv({ cls: "mlog__detail" });
@@ -273,12 +309,28 @@ var LibraryView = class extends ItemView {
     return (this.items || []).filter((it) => {
       if (this.filter.platform && it.platform !== this.filter.platform) return false;
       if (this.filter.tag && !it.tags.includes(this.filter.tag)) return false;
+      if (this.filter.review && !this.matchesReview(it, this.filter.review)) return false;
       if (this.filter.search) {
         const hay = `${it.title} ${it.creator} ${it.sourceUrl}`.toLowerCase();
         if (!hay.includes(this.filter.search)) return false;
       }
       return true;
     });
+  }
+  matchesReview(item, filter) {
+    if (filter === "unwatched") return !item.watched;
+    if (filter === "watched") return item.watched;
+    if (filter === "starred") return item.starred;
+    return true;
+  }
+  async selectItem(item) {
+    this.selected = item;
+    if (!item.watched) await this.plugin.updateReviewState(item, "watched", true);
+    this.renderGrid();
+    this.renderDetail();
+    if (window.matchMedia("(max-width: 700px)").matches) {
+      this.detailEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
   renderGrid() {
     const grid = this.gridEl;
@@ -301,17 +353,15 @@ var LibraryView = class extends ItemView {
       } else {
         thumb.createDiv({ cls: "mlog-card__placeholder", text: item.platform });
       }
+      if (item.starred) thumb.createSpan({ cls: "mlog-card__star", text: "\u2605", attr: { "aria-label": "Starred" } });
+      if (!item.watched) thumb.createSpan({ cls: "mlog-card__unwatched", text: "New" });
       const body = card.createDiv({ cls: "mlog-card__body" });
       body.createDiv({ cls: "mlog-card__title", text: item.title });
       const metaRow = body.createDiv({ cls: "mlog-card__meta" });
       metaRow.createSpan({ cls: "mlog-chip", text: item.platform });
       if (item.creator) metaRow.createSpan({ text: item.creator });
       metaRow.createSpan({ cls: "mlog-card__date", text: String(item.capturedAt).slice(0, 10) });
-      card.addEventListener("click", () => {
-        this.selected = item;
-        this.renderGrid();
-        this.renderDetail();
-      });
+      card.addEventListener("click", () => this.selectItem(item));
     }
     if (list.length > 200) {
       grid.createDiv({ cls: "mlog__empty-sub", text: `Showing 200 of ${list.length} \u2014 narrow the filters.` });
@@ -325,11 +375,7 @@ var LibraryView = class extends ItemView {
       d.createDiv({ cls: "mlog__empty-sub", text: "Select an item to see details." });
       return;
     }
-    const shot = item.screenshot && this.app.vault.getAbstractFileByPath(item.screenshot);
-    if (shot) {
-      const img = d.createEl("img", { cls: "mlog-detail__img", attr: { src: this.app.vault.getResourcePath(shot) } });
-      img.addEventListener("click", () => this.app.workspace.openLinkText(item.screenshot, "", false));
-    }
+    this.renderMedia(d, item);
     d.createEl("h3", { text: item.title });
     const meta = d.createDiv({ cls: "mlog-detail__meta" });
     meta.createSpan({ cls: "mlog-chip", text: item.platform });
@@ -361,6 +407,16 @@ var LibraryView = class extends ItemView {
     };
     renderTags();
     const actions = d.createDiv({ cls: "mlog-detail__actions" });
+    const star = actions.createEl("button", {
+      cls: item.starred ? "mlog-action--active" : "",
+      text: "\u2605 Star",
+      attr: { "aria-pressed": String(item.starred) }
+    });
+    star.addEventListener("click", async () => {
+      await this.plugin.updateReviewState(item, "starred", !item.starred);
+      this.renderGrid();
+      this.renderDetail();
+    });
     if (item.sourceUrl) {
       const open = actions.createEl("button", { cls: "mod-cta", text: "Open source" });
       open.addEventListener("click", () => window.open(item.sourceUrl, "_blank"));
@@ -374,6 +430,51 @@ var LibraryView = class extends ItemView {
       this.selected = null;
       this.render();
     });
+    const visible = this.filtered();
+    const index = visible.findIndex((candidate) => candidate.id === item.id);
+    const completedUnwatchedItem = this.filter.review === "unwatched" && item.watched && index < 0;
+    const nav = d.createDiv({ cls: "mlog-detail__nav" });
+    const previous = nav.createEl("button", { text: "Previous" });
+    previous.disabled = completedUnwatchedItem || index <= 0;
+    previous.addEventListener("click", () => this.selectItem(visible[index - 1]));
+    nav.createSpan({
+      text: completedUnwatchedItem ? `${visible.length} unwatched left` : index >= 0 ? `${index + 1} of ${visible.length}` : ""
+    });
+    const next = nav.createEl("button", { text: "Next" });
+    next.disabled = completedUnwatchedItem ? visible.length === 0 : index < 0 || index >= visible.length - 1;
+    next.addEventListener("click", () => this.selectItem(completedUnwatchedItem ? visible[0] : visible[index + 1]));
+  }
+  renderMedia(container, item) {
+    const shot = item.screenshot && this.app.vault.getAbstractFileByPath(item.screenshot);
+    const poster = shot ? this.app.vault.getResourcePath(shot) : "";
+    const video = item.video && this.app.vault.getAbstractFileByPath(item.video);
+    if (video) {
+      const player = container.createEl("video", {
+        cls: "mlog-detail__media",
+        attr: { controls: "", preload: "metadata", src: this.app.vault.getResourcePath(video) }
+      });
+      if (poster) player.setAttribute("poster", poster);
+      return;
+    }
+    if (/^https:\/\//i.test(item.embedUrl)) {
+      container.createEl("iframe", {
+        cls: "mlog-detail__media",
+        attr: {
+          src: item.embedUrl,
+          title: `Embedded media: ${item.title}`,
+          loading: "lazy",
+          allow: "autoplay; encrypted-media; picture-in-picture",
+          allowfullscreen: "",
+          referrerpolicy: "strict-origin-when-cross-origin",
+          sandbox: "allow-scripts allow-same-origin allow-presentation"
+        }
+      });
+      return;
+    }
+    if (shot) {
+      const img = container.createEl("img", { cls: "mlog-detail__media", attr: { src: poster } });
+      img.addEventListener("click", () => this.app.workspace.openLinkText(item.screenshot, "", false));
+    }
   }
 };
 var AddItemModal = class extends Modal {

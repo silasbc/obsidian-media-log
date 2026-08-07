@@ -40,6 +40,10 @@ captured_at: "2026-07-08 21:30:00"
 creator: "Paul Sellers"
 title: "How to sharpen a chisel"
 screenshot: "Media Log/Assets/ml-20260708-213000-youtube-how-to-sharpen-a-chisel.jpg"
+video: "Media Log/Assets/Video/ml-20260708-213000-youtube-how-to-sharpen-a-chisel.mp4"
+embed_url: "https://www.youtube.com/embed/…"
+watched: true
+starred: true
 tags: ["woodworking"]
 status: captured
 ---
@@ -60,10 +64,14 @@ Field rules (what the plugin actually reads):
 | `creator` | no | Channel/author/site name. |
 | `title` | no | Falls back to the filename. |
 | `screenshot` | no | **Vault-relative** path to an image in the Assets folder. Name the asset after the `media_id`. |
+| `video` | no | **Vault-relative** path to a playable file. The detail pane prefers it over an embed or screenshot. |
+| `embed_url` | no | HTTPS player URL shown when no local `video` exists. |
+| `watched` | no | Review state written by the plugin when detail opens. Preserve it when enriching an existing item. |
+| `starred` | no | Favorite state written by the plugin. Preserve it when enriching an existing item. |
 | `tags` | no | YAML list of plain strings, no `#`. Editable later in the plugin's detail pane. |
 | `status` | no | Write `captured`. Reserved for your own workflow states. |
 
-Unknown frontmatter keys are ignored, so a runner can add its own (`embed_url`, `duration`, `video`, …) without breaking anything — see "Playable media" below.
+Unknown frontmatter keys are ignored, so a runner can add its own (`duration`, `resolution`, …) without breaking anything — see "Playable media" below.
 
 ## The queue
 

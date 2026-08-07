@@ -7,6 +7,8 @@ creator: "YouTube"
 title: "Sample: hand-cut dovetails in 10 minutes"
 screenshot: ""
 tags: ["woodworking", "learning"]
+watched: true
+starred: true
 status: captured
 ---
 

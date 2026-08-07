@@ -7,8 +7,9 @@ Every saved item is a plain, readable Markdown note with YAML frontmatter — no
 ## How it works
 
 - **Add item** (button or command palette → *Media Log: Add media item from URL*): paste a URL. The plugin fetches the page title, site name, description, and preview image, detects the platform (YouTube, X, TikTok, Instagram, Reddit, or generic web), and writes one item note into your items folder.
-- **Library** (ribbon icon, command palette, or `obsidian://media-log`): browse items newest-first. Filter by platform or tag, search titles/creators/URLs, click a card for the detail pane.
-- **Detail pane**: preview image, metadata, tag editing (writes back to the note's frontmatter), open source, open note, reversible delete.
+- **Library** (ribbon icon, command palette, or `obsidian://media-log`): browse items newest-first. Filter by platform, tag, or review state; search titles/creators/URLs; click a card for the detail pane.
+- **Review loop**: opening an item records `watched: true`; star keepers with one tap; work through the current filtered set with Previous/Next. All review state stays in the item's frontmatter.
+- **Detail pane**: plays runner-provided local `video` files or HTTPS `embed_url` media, falls back to the preview image, edits tags, and provides source/note/reversible-delete actions.
 
 ## Item format
 
@@ -21,7 +22,11 @@ captured_at: "2026-07-08 21:30:00"
 creator: "YouTube"
 title: "How to sharpen a chisel"
 screenshot: "Media Log/Assets/ml-….jpg"
+video: "Media Log/Assets/ml-….mp4" # optional
+embed_url: "https://www.youtube.com/embed/…" # optional
 tags: ["woodworking"]
+watched: true # optional; written when detail opens
+starred: true # optional; written by the Star action
 status: captured
 ---
 ```
@@ -79,7 +84,14 @@ Copy `manifest.json`, `main.js`, and `styles.css` into `<your vault>/.obsidian/p
 ```bash
 npm install   # or: bun install
 npm run build # bundles src/main.js → main.js
+npm run check # syntax, version, release-asset, and sanitization checks
 ```
+
+## Privacy and release safety
+
+The repository contains plugin source, generic documentation, and fictional sample notes only. It does not include a vault, captured links, screenshots, plugin settings, browser profiles, credentials, or a companion runner installation.
+
+`npm run check` runs the repository's release guard. It refuses private absolute paths and hostnames, email addresses, credential-shaped strings, mismatched versions, and missing release assets. Maintainers should also scan the full Git object history before publishing a tag; the release checklist is recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
