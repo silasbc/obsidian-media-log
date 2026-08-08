@@ -1,5 +1,7 @@
 # Media Log
 
+[![release-check](https://github.com/cobbenterprises/obsidian-media-log/actions/workflows/release-check.yml/badge.svg)](https://github.com/cobbenterprises/obsidian-media-log/actions/workflows/release-check.yml)
+
 Save links as durable Markdown media items and browse them as a visual library inside Obsidian.
 
 Every saved item is a plain, readable Markdown note with YAML frontmatter — no database, no lock-in. The plugin gives those notes a gallery: cards with preview images, platform and tag filters, search, and a detail pane with editable tags. Delete is reversible (items go to your vault trash).

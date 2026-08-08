@@ -61,6 +61,22 @@ for (const file of tracked) {
   }
 }
 
+// Self-test seam (dd-20260807-3x3e): prove the scanner actually catches a
+// synthetic private path and a machine-local Git identity, without either
+// value ever existing verbatim in this repository (built by concatenation).
+if (process.argv.includes("--self-test")) {
+  const plantedPath = ["/U", "sers/someone/Secret", "Vault/note.md"].join("");
+  const plantedIdentity = ["someone@laptop", ".local"].join("");
+  const pathHit = checks.some(([, pattern]) => pattern.test(plantedPath));
+  const identityHit = /@[^\n>]*\.local\b/i.test(plantedIdentity);
+  if (!pathHit || !identityHit) {
+    console.error(`Self-test FAILED: private path caught=${pathHit}, local identity caught=${identityHit}`);
+    process.exit(1);
+  }
+  console.log("Self-test passed: synthetic private path and machine-local identity both fail the gate.");
+  process.exit(0);
+}
+
 if (failures.length) {
   console.error("Release check failed:\n" + failures.map((item) => `- ${item}`).join("\n"));
   process.exit(1);
