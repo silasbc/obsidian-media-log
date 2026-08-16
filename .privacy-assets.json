@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "assets": {
+    "60e1165c453c0a042c68f75de79fbccb3ea4033b0558a06d6f227fc9e9a2dc1a": {
+      "reviewed": "2026-08-13",
+      "source": "Sanitized select-demo-vault library capture on the Mac mini; reviewed at original 2800x1800 resolution."
+    },
+    "b85cb70627175005b2b32a3218ba2d97f4401337f0af6767daf29d68bf13e3cd": {
+      "reviewed": "2026-08-13",
+      "source": "Sanitized select-demo-vault detail capture on the Mac mini; reviewed at original 2800x1800 resolution."
+    }
+  }
+}

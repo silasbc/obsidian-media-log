@@ -15,6 +15,7 @@ Release verification:
 2. Confirm `git diff --exit-code -- main.js` after the release build is committed.
 3. Scan every reachable Git object, not only the working tree, for private paths, private hostnames, emails, and credential shapes.
 4. Attach `main.js`, `manifest.json`, and `styles.css` to the GitHub release whose tag exactly matches the manifest version.
+5. Confirm `GUIDE.md` is current and every README screenshot was captured from the sanitized demo vault, reviewed at original resolution, stripped of metadata, and attested in `.privacy-assets.json`.
 
 ## 1.1.0 — 2026-07-21
 

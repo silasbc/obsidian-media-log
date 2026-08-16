@@ -4,7 +4,15 @@
 
 Save links as durable Markdown media items and browse them as a visual library inside Obsidian.
 
+**New here? Read the [Guide](GUIDE.md)** — a walkthrough for humans and agents covering installation, vault configuration, capture and review workflows, and the plugin's plain-file contract.
+
 Every saved item is a plain, readable Markdown note with YAML frontmatter — no database, no lock-in. The plugin gives those notes a gallery: cards with preview images, platform and tag filters, search, and a detail pane with editable tags. Delete is reversible (items go to your vault trash).
+
+![Media Log library with fictional demo items](docs/library.png)
+
+Select a card to review its media, metadata, tags, source, and neighboring items without leaving the library.
+
+![Media Log detail pane with a fictional demo item](docs/detail.png)
 
 ## How it works
 
@@ -91,9 +99,9 @@ npm run check # syntax, version, release-asset, and sanitization checks
 
 ## Privacy and release safety
 
-The repository contains plugin source, generic documentation, and fictional sample notes only. It does not include a vault, captured links, screenshots, plugin settings, browser profiles, credentials, or a companion runner installation.
+The repository contains plugin source, generic documentation, and screenshots captured only from a sanitized fictional demo vault. It does not include a live vault, real captured links, plugin settings, browser profiles, credentials, or a companion runner installation.
 
-`npm run check` runs the repository's release guard. It refuses private absolute paths and hostnames, email addresses, credential-shaped strings, mismatched versions, and missing release assets. Maintainers should also scan the full Git object history before publishing a tag; the release checklist is recorded in [CHANGELOG.md](CHANGELOG.md).
+`npm run release:check` runs the repository's full release guard. It builds and smoke-tests the plugin, requires the guide and local README screenshots, scans the current tree and every reachable Git object for private data, requires reviewed hashes for binary assets, rejects PNG/JPEG metadata, and confirms the generated bundle is committed. The tracked pre-push hook runs that same command.
 
 ## License
 
