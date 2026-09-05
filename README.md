@@ -107,3 +107,7 @@ The repository contains plugin source, generic documentation, and screenshots ca
 ## License
 
 MIT
+
+## Sifi's edition
+
+This repository is a fork. It keeps the item contract and plugin id above exactly as upstream defines them and adds browse tools on top: random deals, on-this-day, caption search, paging with month headers, a duplicate scan, an autoplaying reel player, and a full-screen TV mode. See [FORK.md](FORK.md) for the rules, the feature list, and the fork changelog.

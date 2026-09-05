@@ -88,3 +88,46 @@
 .mlog-modal__input { width: 100%; margin-bottom: 0.5rem; }
 .mlog-modal__row { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
 .mlog-modal__status { min-height: 1.2em; color: var(--text-muted); font-size: 0.85rem; }
+
+/* ---- Sifi's edition (FORK.md): browse tools, paging, TV mode, duplicate scan ---- */
+.mlog__tools { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; margin: -0.2rem 0 0.6rem; }
+.mlog-tool { font-size: 0.78rem; border-radius: 999px; padding: 0.15rem 0.75rem; }
+.mlog-tool--active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.mlog__month { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; margin-top: 0.4rem; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.mlog__pager { grid-column: 1 / -1; display: flex; justify-content: center; align-items: center; gap: 0.8rem; margin-top: 0.6rem; color: var(--text-muted); font-size: 0.8rem; }
+.mlog--portrait .mlog-card__thumb { aspect-ratio: 9/16; }
+.mlog-card__thumb img.mlog-thumb--live { position: absolute; inset: 0; z-index: 0; }
+.mlog-card__star, .mlog-card__unwatched { z-index: 1; }
+.mlog-card__tags { margin-top: 3px; font-size: 0.7rem; color: var(--text-accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlog-detail__media--portrait { aspect-ratio: 9/16; width: min(100%, calc(72vh * 9 / 16)); margin: 0 auto; }
+.mlog-detail__media--wide { aspect-ratio: 16/10; }
+.mlog-detail__media--empty { display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.mlog__error { border: 1px solid var(--text-error, var(--color-red)); border-radius: 10px; padding: 1rem; text-align: center; margin: 1rem 0; }
+.mlog__error-title { font-weight: 600; margin-bottom: 0.3rem; }
+.mlog__error button { margin-top: 0.6rem; }
+
+.mlog-tv { position: fixed; inset: 0; z-index: 1000; background: #000; display: flex; align-items: center; justify-content: center; }
+.mlog-tv__panel { position: relative; width: min(94vw, calc(94vh * 9 / 16)); }
+.mlog-tv__panel .mlog-detail__media { width: 100%; max-height: 94vh; border-radius: 0; background: #000; }
+.mlog-tv__panel .mlog-detail__media--wide { width: min(94vw, calc(94vh * 16 / 10)); }
+.mlog-tv__ctl { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.72)); opacity: 1; transition: opacity 0.4s; color: #fff; }
+.mlog-tv__ctl--hidden { opacity: 0; }
+.mlog-tv__title { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlog-tv__row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.mlog-tv__pills { display: flex; gap: 0.4rem; margin-left: auto; }
+.mlog-tv__spacer { flex: 1; }
+.mlog-tv__btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; min-height: 40px; min-width: 40px; padding: 0 0.8rem; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.14); color: #fff; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.mlog-tv__btn svg { width: 18px; height: 18px; }
+.mlog-tv__btn--active { background: #fff; color: #000; }
+
+.mlog-scan__status { min-height: 1.2em; color: var(--text-muted); font-size: 0.85rem; }
+.mlog-scan__clean { font-weight: 600; margin-top: 0.5rem; }
+.mlog-scan__group { border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 0.6rem; margin-top: 0.6rem; }
+.mlog-scan__label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
+.mlog-scan__label--definite { color: var(--color-orange); }
+.mlog-scan__row { display: flex; gap: 0.6rem; overflow-x: auto; margin-top: 0.5rem; padding-bottom: 0.2rem; }
+.mlog-scan__member { width: 120px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.mlog-scan__thumb { aspect-ratio: 9/16; border-radius: 8px; overflow: hidden; background: var(--background-modifier-hover); position: relative; display: flex; align-items: center; justify-content: center; }
+.mlog-scan__thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mlog-scan__title { font-size: 0.72rem; font-weight: 500; line-height: 1.3; max-height: 2.6em; overflow: hidden; overflow-wrap: anywhere; }
+.mlog-scan__meta { font-size: 0.68rem; color: var(--text-muted); }

@@ -14,6 +14,7 @@ const {
   requestUrl,
   normalizePath,
 } = require("obsidian");
+const browse = require("./browse"); // [sifi] browse tools — see FORK.md
 
 const VIEW_TYPE = "media-log-library";
 
@@ -115,7 +116,7 @@ function hasTextSelectionWithin(element) {
 module.exports = class MediaLogPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
-    this.registerView(VIEW_TYPE, (leaf) => new LibraryView(leaf, this));
+    this.registerView(VIEW_TYPE, (leaf) => new sifi.LibraryView(leaf, this)); // [sifi]
     this.addRibbonIcon("library", "Open Media Log", () => this.activateView());
     this.addCommand({ id: "open-library", name: "Open library", callback: () => this.activateView() });
     this.addCommand({ id: "add-item", name: "Add media item from URL", callback: () => new AddItemModal(this.app, this).open() });
@@ -131,7 +132,7 @@ module.exports = class MediaLogPlugin extends Plugin {
         this.activateView();
       }
     });
-    this.addSettingTab(new MediaLogSettingTab(this.app, this));
+    this.addSettingTab(new sifi.SettingTab(this.app, this)); // [sifi]
   }
 
   async activateView() {
@@ -186,6 +187,7 @@ module.exports = class MediaLogPlugin extends Plugin {
         starred: fm.starred === true,
         tags: Array.isArray(fm.tags) ? fm.tags.map(String) : [],
       });
+      browse.enrichItem(items[items.length - 1], fm); // [sifi] optional derived fields; the contract is unchanged
     }
     items.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
     return items;
@@ -701,3 +703,9 @@ class MediaLogSettingTab extends PluginSettingTab {
       );
   }
 }
+
+// ---- Sifi's edition (FORK.md) ----------------------------------------------------
+// The fork lives in src/sifi.js as subclasses of the classes above, so upstream
+// merges stay clean. Exposed on the export for the fork's smoke test.
+const sifi = require("./sifi").build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelectionWithin });
+module.exports.sifi = sifi;

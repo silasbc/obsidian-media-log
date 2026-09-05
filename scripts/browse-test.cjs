@@ -1,0 +1,292 @@
+// Sifi's edition — unit tests for src/browse.js (pure logic, no Obsidian).
+// Run: node --test scripts/browse-test.cjs
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const b = require("../src/browse.js");
+
+// ---- fallbacks ----
+test("hostOf: hostname extraction is defensive", () => {
+  assert.equal(b.hostOf("https://www.YouTube.com:443/watch?v=x"), "youtube.com");
+  assert.equal(b.hostOf("http://sub.example.com/path?q=1#frag"), "sub.example.com");
+  assert.equal(b.hostOf("example.com/foo/bar"), "example.com");
+  assert.equal(b.hostOf(""), "");
+  assert.equal(b.hostOf(null), "");
+  assert.equal(b.hostOf(undefined), "");
+});
+
+test("itemUrl: sourceUrl wins, url is the fixture fallback, ghosts vanish", () => {
+  assert.equal(b.itemUrl({ sourceUrl: "https://a.com/1", url: "https://b.com/2" }), "https://a.com/1");
+  assert.equal(b.itemUrl({ url: "https://b.com/2" }), "https://b.com/2");
+  assert.equal(b.itemUrl({ sourceUrl: "undefined" }), "");
+  assert.equal(b.itemUrl(null), "");
+});
+
+// ---- dates ----
+test("dateKeyOf: captured_at wins, media_id stamp is the fallback", () => {
+  assert.equal(b.dateKeyOf("2026-08-07 14:28:00", "ml-20260101-000000-web-x"), "2026-08-07");
+  assert.equal(b.dateKeyOf("", "ml-20260707-160000-instagram-reel"), "2026-07-07");
+  assert.equal(b.dateKeyOf("garbage", "ml-nope"), "");
+  assert.equal(b.dateKeyOf(null, null), "");
+});
+
+test("mmddOf / todayMMDD / onThisDayItems: same month-day across years", () => {
+  assert.equal(b.mmddOf("2026-08-07"), "08-07");
+  assert.equal(b.mmddOf("2024-08-07 10:00"), "08-07");
+  assert.equal(b.mmddOf(""), "");
+  assert.equal(b.mmddOf("garbage"), "");
+  assert.equal(b.todayMMDD(new Date(2026, 8, 4)), "09-04");
+  const items = [{ dkey: "2026-08-07" }, { dkey: "2024-08-07" }, { dkey: "2026-08-06" }, { dkey: "" }];
+  assert.equal(b.onThisDayItems(items, "08-07").length, 2);
+  assert.equal(b.onThisDayItems(items, "01-01").length, 0);
+  assert.equal(b.onThisDayItems(items, "").length, 0);
+});
+
+test("monthLabelOf and shortDateOf", () => {
+  assert.equal(b.monthLabelOf("2026-08-07 18:12"), "AUGUST 2026");
+  assert.equal(b.monthLabelOf("2026-01-02"), "JANUARY 2026");
+  assert.equal(b.monthLabelOf(""), "UNDATED");
+  assert.equal(b.monthLabelOf("2026-13-01"), "UNDATED");
+  assert.equal(b.shortDateOf("2026-08-07"), "Aug 7");
+  assert.equal(b.shortDateOf("2026-12-25"), "Dec 25");
+  assert.equal(b.shortDateOf(""), "");
+});
+
+test("groupByMonth: month groups in encounter order, undated group last", () => {
+  const items = [{ dkey: "2026-08-07" }, { dkey: "2026-08-01" }, { dkey: "2026-07-28" }, { dkey: "" }];
+  assert.deepEqual(
+    b.groupByMonth(items).map((g) => [g.label, g.items.length]),
+    [["AUGUST 2026", 2], ["JULY 2026", 1], ["UNDATED", 1]]
+  );
+  assert.deepEqual(b.groupByMonth([]), []);
+});
+
+// ---- browse tools ----
+test("matchesQuery: tokenized AND over title, creator, platform, tags, caption, url", () => {
+  const it = {
+    title: "Heavy Triple",
+    creator: "Lifter",
+    platform: "Instagram",
+    tags: ["Bench", "meet"],
+    caption: "belt on, third attempt",
+    sourceUrl: "https://www.instagram.com/reel/ABC/",
+  };
+  assert.equal(b.matchesQuery(it, ""), true);
+  assert.equal(b.matchesQuery(it, "   "), true);
+  assert.equal(b.matchesQuery(it, "heavy"), true);
+  assert.equal(b.matchesQuery(it, "HEAVY triple"), true);
+  assert.equal(b.matchesQuery(it, "bench insta"), true); // tag + platform substring
+  assert.equal(b.matchesQuery(it, "belt attempt"), true); // caption tokens
+  assert.equal(b.matchesQuery(it, "reel/abc"), true); // url
+  assert.equal(b.matchesQuery(it, "heavy squat"), false); // AND semantics
+  assert.equal(b.matchesQuery({ title: "", tags: [] }, "x"), false);
+  assert.equal(b.matchesQuery(null, "x"), false);
+});
+
+test("shuffleBySeed: deterministic, a permutation, seed-sensitive", () => {
+  const list = Array.from({ length: 20 }, (_, i) => i);
+  const a = b.shuffleBySeed(list, 42);
+  const a2 = b.shuffleBySeed(list, 42);
+  const c = b.shuffleBySeed(list, 43);
+  assert.deepEqual(a, a2, "same seed, same deal");
+  assert.deepEqual([...a].sort((x, y) => x - y), list, "permutation, nothing lost");
+  assert.notDeepEqual(a, c, "different seed, different deal");
+  assert.deepEqual(b.shuffleBySeed([], 1), []);
+  assert.deepEqual(list, Array.from({ length: 20 }, (_, i) => i), "input untouched");
+});
+
+test("paginate: slices by page, clamps out-of-range indexes, reports totals", () => {
+  const list = Array.from({ length: 150 }, (_, i) => i);
+  const p0 = b.paginate(list, 0, 64);
+  assert.deepEqual(p0.items, list.slice(0, 64));
+  assert.equal(p0.pageIdx, 0);
+  assert.equal(p0.totalPages, 3);
+  assert.equal(p0.total, 150);
+  const p2 = b.paginate(list, 2, 64);
+  assert.deepEqual(p2.items, list.slice(128, 150));
+  assert.equal(b.paginate(list, 99, 64).pageIdx, 2);
+  assert.equal(b.paginate(list, -5, 64).pageIdx, 0);
+  const empty = b.paginate([], 0, 64);
+  assert.equal(empty.totalPages, 1);
+  assert.deepEqual(empty.items, []);
+  assert.equal(b.paginate(Array.from({ length: 64 }), 0, 64).totalPages, 1);
+  assert.equal(b.paginate(list, 0, 0).items.length, 64, "a bad page size falls back to 64");
+});
+
+// ---- playlist stepping + auto-advance ----
+test("nextIndex / prevIndex: edges, loop, empty", () => {
+  assert.equal(b.nextIndex(0, 3, false), 1);
+  assert.equal(b.nextIndex(2, 3, false), -1);
+  assert.equal(b.nextIndex(2, 3, true), 0);
+  assert.equal(b.prevIndex(1, 3, false), 0);
+  assert.equal(b.prevIndex(0, 3, false), -1);
+  assert.equal(b.prevIndex(0, 3, true), 2);
+  assert.equal(b.nextIndex(0, 0, true), -1);
+  assert.equal(b.prevIndex(0, 0, true), -1);
+});
+
+test("advanceTick: play → countdown → advance (modal shape)", () => {
+  const t0 = 1000000;
+  let st = b.advInit(20, 5, t0);
+  assert.equal(b.advanceTick(st, t0 + 19000).action, "none");
+  let r = b.advanceTick(st, t0 + 20000);
+  assert.equal(r.action, "show-countdown");
+  assert.equal(r.left, 5);
+  st = r.st;
+  assert.equal(st.phase, "countdown");
+  r = b.advanceTick(st, t0 + 22000);
+  assert.equal(r.action, "countdown");
+  assert.equal(r.left, 3);
+  r = b.advanceTick(st, t0 + 25000);
+  assert.equal(r.action, "advance");
+  assert.equal(r.st.phase, "playing");
+});
+
+test("advanceTick: TV shape (countSecs 0) advances straight; off/null are inert", () => {
+  const t0 = 5000;
+  const st = b.advInit(30, 0, t0);
+  assert.equal(b.advanceTick(st, t0 + 29999).action, "none");
+  assert.equal(b.advanceTick(st, t0 + 30000).action, "advance");
+  assert.equal(b.advanceTick(null, t0).action, "none");
+  assert.equal(b.advanceTick({ phase: "off" }, t0).action, "none");
+});
+
+// ---- duplicate scan ----
+test("urlKeyOf: instagram identity preserves code case; general urls normalize", () => {
+  assert.equal(b.urlKeyOf("https://www.instagram.com/reel/AbC123/?utm_source=share"), "instagram.com/reel/AbC123");
+  assert.equal(b.urlKeyOf("http://instagram.com/reels/AbC123/"), "instagram.com/reel/AbC123");
+  assert.notEqual(b.urlKeyOf("https://instagram.com/reel/ABC/"), b.urlKeyOf("https://instagram.com/reel/abc/"));
+  assert.equal(b.urlKeyOf("https://www.instagram.com/p/Xy-9_/"), "instagram.com/p/Xy-9_");
+  assert.equal(b.urlKeyOf("https://Example.com/Foo/?q=1#frag"), "example.com/foo");
+  assert.equal(b.urlKeyOf("example.com/foo/"), "example.com/foo");
+  assert.equal(b.urlKeyOf("https://www.example.com/foo"), "example.com/foo");
+  assert.equal(b.urlKeyOf(""), "");
+  assert.equal(b.urlKeyOf(null), "");
+});
+
+test("normTitleKey: collapse and floor rules", () => {
+  assert.equal(b.normTitleKey("Bench Press — Tips! Today"), "bench press tips today");
+  assert.equal(b.normTitleKey("bench   press,, tips  today"), "bench press tips today");
+  assert.equal(b.normTitleKey("Untitled"), "");
+  assert.equal(b.normTitleKey("short"), "");
+  assert.equal(b.normTitleKey(""), "");
+  assert.equal(b.normTitleKey(null), "");
+});
+
+test("dupeGroups: url groups definite, title groups maybe, exclusions hold, sourceUrl honored", () => {
+  const a1 = { title: "Squat day", sourceUrl: "https://www.instagram.com/reel/CODE1/?x=1" };
+  const a2 = { title: "Squat day repost", sourceUrl: "https://instagram.com/reel/CODE1/" };
+  const b1 = { title: "Bench press tips today", url: "https://example.com/1" };
+  const b2 = { title: "Bench Press — tips, today!", url: "https://example.com/2" };
+  const h1 = { title: "instagram.com", sourceUrl: "https://instagram.com/some-page" };
+  const h2 = { title: "instagram.com", sourceUrl: "https://instagram.com/other-page" };
+  const d = { title: "Unique thing entirely", sourceUrl: "https://example.org/1" };
+  const groups = b.dupeGroups([a1, a2, b1, b2, h1, h2, d]);
+  assert.equal(groups.length, 2, "hostname-fallback titles never group");
+  assert.equal(groups[0].kind, "url");
+  assert.equal(groups[0].maybe, false);
+  assert.deepEqual(groups[0].items, [a1, a2]);
+  assert.equal(groups[1].kind, "title");
+  assert.equal(groups[1].maybe, true);
+  assert.deepEqual(groups[1].items, [b1, b2]);
+  assert.deepEqual(b.dupeGroups([d]), []);
+  assert.deepEqual(b.dupeGroups([]), []);
+});
+
+test("othersOf, quarantineLine, stampNow", () => {
+  const g = { items: [1, 2, 3] };
+  assert.deepEqual(b.othersOf(g, 2), [1, 3]);
+  assert.deepEqual(b.othersOf(null, 1), []);
+  assert.equal(
+    b.quarantineLine({ title: "Squat day", sourceUrl: "https://example.com/x" }, "2026-08-07 22:50"),
+    "- Squat day · https://example.com/x · trashed 2026-08-07 22:50 · duplicate-scan"
+  );
+  assert.equal(b.quarantineLine({}, "S"), "- Untitled · — · trashed S · duplicate-scan");
+  assert.equal(b.stampNow(new Date(2026, 7, 7, 9, 5)), "2026-08-07 09:05");
+});
+
+// ---- captions ----
+test("commentPreview: strips frontmatter, collapses whitespace, caps length", () => {
+  assert.equal(b.commentPreview("---\nmedia_id: x\n---\nFrug #lakepowell #fyp\n"), "Frug #lakepowell #fyp");
+  assert.equal(b.commentPreview("---\na: 1\n---\n"), "");
+  assert.equal(b.commentPreview("no frontmatter\n\nsecond   paragraph"), "no frontmatter second paragraph");
+  assert.equal(b.commentPreview(undefined), "");
+  assert.equal(b.commentPreview(null), "");
+  const long = b.commentPreview("x".repeat(300));
+  assert.ok(long.length <= 240);
+  assert.ok(long.endsWith("…"));
+});
+
+// ---- kind + media shape ----
+test("kindOf: explicit kind wins, url-derived fallback, link floor", () => {
+  assert.equal(b.kindOf({ kind: "Reel" }), "reel");
+  assert.equal(b.kindOf({ kind: "video" }), "video");
+  assert.equal(b.kindOf({ sourceUrl: "https://www.instagram.com/reel/ABC/" }), "reel");
+  assert.equal(b.kindOf({ sourceUrl: "https://www.instagram.com/reels/ABC/" }), "reel");
+  assert.equal(b.kindOf({ sourceUrl: "https://www.instagram.com/p/ABC/" }), "post");
+  assert.equal(b.kindOf({ sourceUrl: "https://www.instagram.com/tv/ABC/" }), "tv");
+  assert.equal(b.kindOf({ sourceUrl: "https://example.com/a" }), "link");
+  assert.equal(b.kindOf(null), "link");
+});
+
+test("isPortrait: reels, posts, Instagram and TikTok are 9:16; the web is wide", () => {
+  assert.equal(b.isPortrait({ kind: "reel" }), true);
+  assert.equal(b.isPortrait({ platform: "Instagram" }), true);
+  assert.equal(b.isPortrait({ platform: "TikTok" }), true);
+  assert.equal(b.isPortrait({ platform: "Web", embedUrl: "https://www.tiktok.com/embed/1" }), true);
+  assert.equal(b.isPortrait({ platform: "YouTube", sourceUrl: "https://youtu.be/x" }), false);
+  assert.equal(b.isPortrait({ platform: "Web" }), false);
+});
+
+test("autoplayUrl: adds autoplay=1 once, keeps existing params", () => {
+  assert.equal(b.autoplayUrl("https://www.instagram.com/reel/X/embed/captioned/"), "https://www.instagram.com/reel/X/embed/captioned/?autoplay=1");
+  assert.equal(b.autoplayUrl("https://www.youtube.com/embed/x?rel=0"), "https://www.youtube.com/embed/x?rel=0&autoplay=1");
+  assert.equal(b.autoplayUrl("https://example.com/e?autoplay=0"), "https://example.com/e?autoplay=0");
+  assert.equal(b.autoplayUrl(""), "");
+});
+
+// ---- the visible-list pipeline ----
+const ITEMS = [
+  { id: "a", title: "Heavy triple", platform: "Instagram", tags: ["bench"], watched: true, starred: false, dkey: "2026-09-04", caption: "" },
+  { id: "b", title: "Squat day", platform: "Instagram", tags: ["squat"], watched: false, starred: true, dkey: "2025-09-04", caption: "belt on" },
+  { id: "c", title: "Chisel sharpening", platform: "YouTube", tags: [], watched: false, starred: false, dkey: "2026-07-08", caption: "" },
+  { id: "d", title: "Example Domain", platform: "Web", tags: ["bench"], watched: false, starred: false, dkey: "", caption: "test capture" },
+];
+
+test("matchesReview and baseFilter keep upstream semantics", () => {
+  assert.equal(b.matchesReview(ITEMS[0], "watched"), true);
+  assert.equal(b.matchesReview(ITEMS[0], "unwatched"), false);
+  assert.equal(b.matchesReview(ITEMS[1], "starred"), true);
+  assert.equal(b.matchesReview(ITEMS[2], ""), true);
+  assert.deepEqual(b.baseFilter(ITEMS, { platform: "Instagram" }).map((i) => i.id), ["a", "b"]);
+  assert.deepEqual(b.baseFilter(ITEMS, { tag: "bench" }).map((i) => i.id), ["a", "d"]);
+  assert.deepEqual(b.baseFilter(ITEMS, { review: "unwatched", tag: "bench" }).map((i) => i.id), ["d"]);
+});
+
+test("visibleList: filters → on-this-day → search → shuffled deal", () => {
+  const opts = { todayMMDD: "09-04", pageSize: 2 };
+  assert.equal(b.visibleList(ITEMS, {}, opts).length, 4);
+  assert.deepEqual(b.visibleList(ITEMS, { onDay: true }, opts).map((i) => i.id), ["a", "b"]);
+  assert.deepEqual(b.visibleList(ITEMS, { search: "belt" }, opts).map((i) => i.id), ["b"], "caption text is searchable");
+  assert.deepEqual(b.visibleList(ITEMS, { search: "capture", platform: "Web" }, opts).map((i) => i.id), ["d"]);
+  const deal = b.visibleList(ITEMS, { seed: 7 }, opts);
+  assert.equal(deal.length, 2, "a deal is capped at one page");
+  assert.deepEqual(deal, b.visibleList(ITEMS, { seed: 7 }, opts), "same seed, same deal");
+  assert.equal(b.visibleList(ITEMS, { seed: null, onDay: undefined }, opts).length, 4, "cleared fork keys are inert");
+  assert.deepEqual(b.visibleList(null, {}, opts), []);
+});
+
+test("enrichItem: remote preview, kind, dkey, tagsLow, caption slot", () => {
+  const item = { id: "ml-20260707-160000-instagram-instagram-reel-x", sourceUrl: "https://www.instagram.com/reel/X/", capturedAt: "", tags: ["Bench"] };
+  b.enrichItem(item, { preview_remote: "https://cdn.example.com/t.jpg", kind: "reel" });
+  assert.equal(item.previewRemote, "https://cdn.example.com/t.jpg");
+  assert.equal(item.kind, "reel");
+  assert.equal(item.dkey, "2026-07-07");
+  assert.deepEqual(item.tagsLow, ["bench"]);
+  assert.equal(item.caption, "");
+  const plain = b.enrichItem({ id: "x", sourceUrl: "https://example.com/", capturedAt: "2026-08-07 14:28:00", tags: [] }, {});
+  assert.equal(plain.previewRemote, "");
+  assert.equal(plain.kind, "link");
+  assert.equal(plain.dkey, "2026-08-07");
+  const insecure = b.enrichItem({ id: "y", sourceUrl: "", capturedAt: "", tags: [] }, { preview_remote: "http://cdn.example.com/t.jpg" });
+  assert.equal(insecure.previewRemote, "", "only https previews are used");
+});
