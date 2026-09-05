@@ -27,6 +27,7 @@ class Setting {}
 class Modal {}
 class Notice {}
 const setIcon = () => {};
+let stubRequest = async () => ({}); // test G swaps this for a fake embed page
 
 const source = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 const moduleRecord = { exports: {} };
@@ -35,7 +36,7 @@ vm.runInNewContext(source, {
   exports: moduleRecord.exports,
   require(name) {
     if (name !== "obsidian") return require(name);
-    return { Plugin, ItemView, PluginSettingTab, Setting, Modal, Notice, setIcon, requestUrl: async () => ({}), normalizePath: (v) => v };
+    return { Plugin, ItemView, PluginSettingTab, Setting, Modal, Notice, setIcon, requestUrl: (...a) => stubRequest(...a), normalizePath: (v) => v };
   },
   console,
   URL,
@@ -146,7 +147,12 @@ const app = {
   view.filter.review = "watched";
   assert.deepEqual(ids(view.tvList("unwatched")), [items[1].id], "TV falls back to all when nothing is unwatched");
   view.filter = { search: "", platform: "", tag: "", review: "" };
-  assert.equal(view.playlist().length, 3, "no local files in this fixture → the playlist falls back to everything visible");
+  assert.equal(view.playlist().length, 2, "no local files, streaming on → the playlist is the two Instagram reels (a web link cannot stream)");
+  view.plugin.settings.streamRemote = false;
+  assert.equal(view.playlist().length, 3, "streaming off, no local files → the playlist falls back to everything visible");
+  assert.equal(view.listOpts().canStream, false);
+  view.plugin.settings.streamRemote = true;
+  assert.equal(view.listOpts().canStream, true, "default on");
 
   await MediaLogPlugin.sifi.loadCaptions(app, items, view.captionCache);
   assert.equal(items[0].caption, "Frug #lakepowell #fyp", "captions come from the note body");
@@ -170,5 +176,54 @@ const app = {
   console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search.");
 })().catch((error) => {
   console.error(error);
+  process.exit(1);
+});
+
+// ---- G. StreamResolver: the embed page's link is cached, one request is shared, a miss is remembered ----
+(async () => {
+  const { StreamResolver } = MediaLogPlugin.sifi;
+  const CTX = '\\"video_url\\":\\"https:\\\\\\/\\\\\\/scontent-x.cdninstagram.com\\\\\\/v\\\\\\/a.mp4?x=1&oe=6A9E171E\\"';
+  let calls = 0;
+  stubRequest = async (req) => {
+    calls++;
+    assert.match(req.url, /^https:\/\/www\.instagram\.com\/reel\/ABC\/embed/, "asks the reel's embed page");
+    assert.ok(req.headers && /Safari/.test(req.headers["User-Agent"]), "browser user agent");
+    return { status: 200, text: "<html>" + CTX + "</html>" };
+  };
+  const plugin = { settings: { streamRemote: true } };
+  const r = new StreamResolver(plugin);
+  const reel = { id: "ml-abc", kind: "reel", sourceUrl: "https://www.instagram.com/reel/ABC/", embedUrl: "https://www.instagram.com/reel/ABC/embed/captioned/" };
+  const [u1, u2] = await Promise.all([r.resolve(reel), r.resolve(reel)]);
+  assert.equal(u1, "https://scontent-x.cdninstagram.com/v/a.mp4?x=1&oe=6A9E171E");
+  assert.equal(u2, u1);
+  assert.equal(calls, 1, "two callers at once share one request");
+  assert.equal(r.peek(reel), u1, "cached and fresh");
+  assert.equal(await r.resolve(reel), u1);
+  assert.equal(calls, 1, "a cached link is not fetched again");
+  assert.equal(r.failed(reel), false);
+  // a miss: remembered, not retried at once, reported
+  stubRequest = async () => { calls++; return { status: 200, text: "<html>Log in</html>" }; };
+  const walled = { id: "ml-wall", kind: "reel", video: "none", sourceUrl: "https://www.instagram.com/reel/ABC/" };
+  assert.equal(r.can(walled), true, "a refused download is still streamable");
+  assert.equal(await r.resolve(walled), "");
+  assert.equal(r.failed(walled), true);
+  assert.equal(await r.resolve(walled), "");
+  assert.equal(calls, 2, "a fresh miss is not asked again");
+  // a thrown request is a miss too
+  stubRequest = async () => { calls++; throw new Error("offline"); };
+  const offline = { id: "ml-off", kind: "reel", sourceUrl: "https://www.instagram.com/reel/OFF/" };
+  assert.equal(await r.resolve(offline), "");
+  assert.equal(r.failed(offline), true);
+  // not streamable: posts, non-Instagram, and the setting off
+  assert.equal(r.can({ id: "p", kind: "post", sourceUrl: "https://www.instagram.com/p/X/" }), false);
+  assert.equal(r.can({ id: "w", kind: "link", sourceUrl: "https://example.com/" }), false);
+  plugin.settings.streamRemote = false;
+  assert.equal(r.can(reel), false);
+  assert.equal(await r.resolve(reel), "", "off: nothing is fetched");
+  assert.equal(calls, 3);
+  assert.equal(MediaLogPlugin.sifi.SIFI_DEFAULTS.streamRemote, true, "default on");
+  console.log("sifi smoke G: StreamResolver ok");
+})().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

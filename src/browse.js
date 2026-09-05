@@ -413,11 +413,83 @@ function isGone(it) {
   return safeStr(it && it.video).toLowerCase() === "none";
 }
 
-// Playable on THIS device: a real local video file. `hasFile` answers whether
-// the referenced vault file exists here (the Mac may have it, the phone may not).
-function isPlayable(it, hasFile) {
+// Playable on THIS device: a real local video file, or — when streaming is on —
+// a reel Instagram will stream. `hasFile` answers whether the referenced vault
+// file exists here (the Mac may have it, the phone may not).
+function isPlayable(it, hasFile, canStream) {
   const v = safeStr(it && it.video);
-  return !!(v && v.toLowerCase() !== "none" && hasFile && hasFile(it));
+  if (v && v.toLowerCase() !== "none" && hasFile && hasFile(it)) return true;
+  return !!(canStream && isStreamable(it));
+}
+
+// ---- streaming from Instagram (owner, 2026-09-05: "if streaming fixes it then do that") ----
+// A reel's embed page, fetched with a plain request (no login, no browser), carries
+// the direct CDN video link inside a JSON string named contextJSON, escaped twice.
+// A native <video> streams that link and autoplays where the embed never does.
+const IG_CODE_RE = /instagram\.com\/(?:[^/?#]+\/)?(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i;
+
+function igCodeOf(url) {
+  const m = IG_CODE_RE.exec(safeStr(url));
+  return m ? m[1] : "";
+}
+
+// The page to ask for the link: the item's own embed URL when it is Instagram's,
+// else one derived from the reel code in the source URL.
+function embedPageFor(it) {
+  if (!it) return "";
+  const e = safeStr(it.embedUrl);
+  if (/^https:\/\/www\.instagram\.com\/[^?#]*\/embed/i.test(e)) return e;
+  const code = igCodeOf(it.sourceUrl || it.url);
+  return code ? `https://www.instagram.com/reel/${code}/embed/captioned/` : "";
+}
+
+// Reels and videos only; an Instagram post is an image.
+function isStreamable(it) {
+  if (!it || safeStr(it.kind) === "post") return false;
+  return !!embedPageFor(it);
+}
+
+// The direct mp4 link out of a saved embed page, or "".
+function extractVideoUrl(html) {
+  const h = safeStr(html);
+  let m = /\\"video_url\\":\\"((?:[^"\\]|\\.)*?)\\"/.exec(h);
+  let raw = m ? m[1] : "";
+  if (!raw) {
+    m = /"video_url"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(h);
+    raw = m ? m[1] : "";
+  }
+  if (!raw) {
+    m = /https?:(?:\\*\/){2}[a-z0-9.-]*cdninstagram\.com[^"'\s]*?\.mp4[^"'\s]*/i.exec(h);
+    raw = m ? m[0] : "";
+  }
+  if (!raw) return "";
+  let url = raw;
+  for (let i = 0; i < 3 && url.indexOf("\\") >= 0; i++) {
+    try {
+      url = JSON.parse('"' + url + '"');
+    } catch {
+      break;
+    }
+  }
+  url = url.replace(/\\+\//g, "/").replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+  return /^https:\/\/[^\s"'<>]+$/i.test(url) ? url : "";
+}
+
+// The link's expiry: `oe=` is hex seconds since the epoch. 0 when absent.
+function cdnExpiry(url) {
+  const m = /[?&]oe=([0-9A-Fa-f]{6,10})(?:&|$)/.exec(safeStr(url));
+  if (!m) return 0;
+  const t = parseInt(m[1], 16) * 1000;
+  return Number.isFinite(t) && t > 0 ? t : 0;
+}
+
+// A cached link is worth using while it has `marginMs` left; one without an
+// expiry is trusted for `defaultMs` from when it was fetched.
+function streamFresh(entry, nowMs, marginMs, defaultMs) {
+  if (!entry || !entry.url) return false;
+  const margin = marginMs == null ? 10 * 60 * 1000 : marginMs;
+  const exp = entry.expires || (entry.fetched || 0) + (defaultMs == null ? 6 * 60 * 60 * 1000 : defaultMs);
+  return exp - margin > nowMs;
 }
 
 // Hashtags in a caption → clean, lower-case, deduped tag list (max 8).
@@ -442,19 +514,21 @@ function tagsFromCaption(it) {
 
 // ---- the visible-list pipeline ----------------------------------------------
 
-function matchesReview(item, filter) {
-  if (filter === "unwatched") return !item.watched && !isGone(item); // a gone reel can never be watched
+function matchesReview(item, filter, canStream) {
+  // a gone reel can never be watched — unless streaming brings it back
+  if (filter === "unwatched") return !item.watched && (!isGone(item) || (!!canStream && isStreamable(item)));
   if (filter === "watched") return !!item.watched;
   if (filter === "starred") return !!item.starred;
   return true;
 }
 
 // Upstream's filters, unchanged in meaning: platform exact, tag exact, review state.
-function baseFilter(items, f) {
+function baseFilter(items, f, opts) {
+  const canStream = !!(opts && opts.canStream);
   return (items || []).filter((it) => {
     if (f.platform && it.platform !== f.platform) return false;
     if (f.tag && !(it.tags || []).includes(f.tag)) return false;
-    if (f.review && !matchesReview(it, f.review)) return false;
+    if (f.review && !matchesReview(it, f.review, canStream)) return false;
     return true;
   });
 }
@@ -465,8 +539,8 @@ function baseFilter(items, f) {
 function visibleList(items, filter, opts) {
   const f = filter || {};
   const o = opts || {};
-  let L = baseFilter(items, f);
-  if (f.playable && o.hasFile) L = L.filter((it) => isPlayable(it, o.hasFile));
+  let L = baseFilter(items, f, o);
+  if (f.playable && (o.hasFile || o.canStream)) L = L.filter((it) => isPlayable(it, o.hasFile, o.canStream));
   L = filterByTags(L, f.tags, f.untagged);
   if (f.month) L = filterByMonth(L, f.month);
   if (f.onDay) L = onThisDayItems(L, o.todayMMDD || "");
@@ -541,6 +615,12 @@ module.exports = {
   posterCandidates,
   isGone,
   isPlayable,
+  igCodeOf,
+  embedPageFor,
+  isStreamable,
+  extractVideoUrl,
+  cdnExpiry,
+  streamFresh,
   hashtagsOf,
   tagsFromCaption,
   matchesReview,

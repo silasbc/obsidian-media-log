@@ -404,6 +404,9 @@ test("visibleList: playable-here filter and unwatched excluding gone reels", () 
   assert.deepEqual(b.visibleList(items, { playable: true }, { hasFile }).map((i) => i.id), ["p"]);
   assert.equal(b.visibleList(items, { playable: true }, {}).length, 4, "without a hasFile answer the filter is inert");
   assert.deepEqual(b.visibleList(items, { review: "unwatched" }, {}).map((i) => i.id), ["p", "m", "e"], "gone reels are not 'unwatched'");
+  const igGone = { ...items[2], sourceUrl: "https://www.instagram.com/reel/G/", kind: "reel" };
+  assert.deepEqual(b.visibleList([items[0], igGone], { review: "unwatched" }, { canStream: true }).map((i) => i.id), ["p", "g"], "a gone reel is unwatched again when it can stream");
+  assert.deepEqual(b.visibleList([items[0], igGone], { review: "unwatched" }, { canStream: false }).map((i) => i.id), ["p"]);
 });
 
 test("enrichItem: remote preview, kind, dkey, tagsLow, caption slot", () => {
@@ -420,4 +423,61 @@ test("enrichItem: remote preview, kind, dkey, tagsLow, caption slot", () => {
   assert.equal(plain.dkey, "2026-08-07");
   const insecure = b.enrichItem({ id: "y", sourceUrl: "", capturedAt: "", tags: [] }, { preview_remote: "http://cdn.example.com/t.jpg" });
   assert.equal(insecure.previewRemote, "", "only https previews are used");
+});
+
+// ---- streaming from Instagram ----
+const CTX = '{\\"edge_followed_by\\":{\\"count\\":55318}},\\"video_url\\":\\"https:\\\\\\/\\\\\\/scontent-x.cdninstagram.com\\\\\\/o1\\\\\\/v\\\\\\/a.mp4?_nc_cat=109&efg=eyJ2ZW5j%3D%3D&oe=6A9E171E\\",\\"video_view_count\\":1}';
+test("extractVideoUrl: the contextJSON form (escaped twice), plain JSON, a bare scan, and nothing", () => {
+  assert.equal(b.extractVideoUrl("<html>" + CTX + "</html>"), "https://scontent-x.cdninstagram.com/o1/v/a.mp4?_nc_cat=109&efg=eyJ2ZW5j%3D%3D&oe=6A9E171E");
+  assert.equal(b.extractVideoUrl('{"video_url":"https:\\/\\/scontent-y.cdninstagram.com\\/v\\/b.mp4?oe=6A9E171E"}'), "https://scontent-y.cdninstagram.com/v/b.mp4?oe=6A9E171E");
+  assert.equal(b.extractVideoUrl('src="https://scontent-z.cdninstagram.com/v/c.mp4?x=1&amp;oe=6A9E171E"'), "https://scontent-z.cdninstagram.com/v/c.mp4?x=1&oe=6A9E171E");
+  assert.equal(b.extractVideoUrl("<html>login wall</html>"), "");
+  assert.equal(b.extractVideoUrl('"video_url":"http://insecure.example/x.mp4"'), "", "only https");
+  assert.equal(b.extractVideoUrl(null), "");
+});
+
+test("cdnExpiry: oe= is hex seconds; streamFresh honours the margin and the no-expiry default", () => {
+  assert.equal(b.cdnExpiry("https://cdn/x.mp4?a=1&oe=6A9E171E"), 0x6a9e171e * 1000);
+  assert.equal(b.cdnExpiry("https://cdn/x.mp4?oe=6A9E171E&z=2"), 0x6a9e171e * 1000);
+  assert.equal(b.cdnExpiry("https://cdn/x.mp4?noexpiry=1"), 0);
+  assert.equal(b.cdnExpiry(""), 0);
+  const exp = 1_000_000_000;
+  assert.equal(b.streamFresh({ url: "u", expires: exp }, exp - 11 * 60 * 1000), true);
+  assert.equal(b.streamFresh({ url: "u", expires: exp }, exp - 9 * 60 * 1000), false, "inside the ten-minute margin");
+  assert.equal(b.streamFresh({ url: "u", expires: exp }, exp - 30_000, 20_000), true, "custom margin");
+  assert.equal(b.streamFresh({ url: "u", fetched: 0 }, 5 * 60 * 60 * 1000), true, "no expiry: trusted six hours");
+  assert.equal(b.streamFresh({ url: "u", fetched: 0 }, 6 * 60 * 60 * 1000), false);
+  assert.equal(b.streamFresh({ expires: exp }, 0), false, "no url");
+  assert.equal(b.streamFresh(null, 0), false);
+});
+
+test("embedPageFor / isStreamable: the item's embed page, or one derived from the reel code; posts are not streams", () => {
+  const withEmbed = { kind: "reel", sourceUrl: "https://www.instagram.com/reel/ABC/", embedUrl: "https://www.instagram.com/reel/ABC/embed/captioned/" };
+  assert.equal(b.embedPageFor(withEmbed), "https://www.instagram.com/reel/ABC/embed/captioned/");
+  assert.equal(b.embedPageFor({ kind: "reel", sourceUrl: "https://www.instagram.com/reels/D_e-f/?igsh=1" }), "https://www.instagram.com/reel/D_e-f/embed/captioned/");
+  assert.equal(b.embedPageFor({ kind: "video", sourceUrl: "https://www.instagram.com/someone/p/XYZ/" }), "https://www.instagram.com/reel/XYZ/embed/captioned/");
+  assert.equal(b.embedPageFor({ kind: "reel", sourceUrl: "https://www.youtube.com/watch?v=1", embedUrl: "https://www.youtube.com/embed/1" }), "", "not Instagram");
+  assert.equal(b.embedPageFor(null), "");
+  assert.equal(b.igCodeOf("https://www.instagram.com/tv/Q1w-e_r/"), "Q1w-e_r");
+  assert.equal(b.igCodeOf("https://example.com/reel/ABC/"), "");
+  assert.equal(b.isStreamable(withEmbed), true);
+  assert.equal(b.isStreamable({ kind: "post", sourceUrl: "https://www.instagram.com/p/ABC/" }), false, "a post is an image");
+  assert.equal(b.isStreamable({ kind: "reel", video: "none", sourceUrl: "https://www.instagram.com/reel/ABC/" }), true, "a refused download still streams");
+  assert.equal(b.isStreamable({ kind: "link", sourceUrl: "https://example.com/" }), false);
+});
+
+test("isPlayable with streaming: the local file wins, a streamable reel counts, a post does not", () => {
+  const local = { video: "Media Log/Assets/Video/p.mp4", kind: "reel", sourceUrl: "https://www.instagram.com/reel/P/" };
+  const unsynced = { video: "Media Log/Assets/Video/u.mp4", kind: "reel", sourceUrl: "https://www.instagram.com/reel/U/" };
+  const refused = { video: "none", kind: "reel", sourceUrl: "https://www.instagram.com/reel/R/" };
+  const post = { kind: "post", sourceUrl: "https://www.instagram.com/p/Q/" };
+  const hasFile = (it) => it === local;
+  assert.equal(b.isPlayable(local, hasFile, false), true);
+  assert.equal(b.isPlayable(unsynced, hasFile, false), false);
+  assert.equal(b.isPlayable(unsynced, hasFile, true), true);
+  assert.equal(b.isPlayable(refused, hasFile, true), true);
+  assert.equal(b.isPlayable(refused, hasFile, false), false);
+  assert.equal(b.isPlayable(post, hasFile, true), false);
+  assert.deepEqual(b.visibleList([local, unsynced, refused, post].map((it, i) => ({ ...it, id: String(i), tags: [] })), { playable: true }, { hasFile: (it) => it.video === local.video, canStream: true }).map((i) => i.id), ["0", "1", "2"]);
+  assert.equal(b.visibleList([local, unsynced].map((it, i) => ({ ...it, id: String(i), tags: [] })), { playable: true }, { canStream: true }).length, 2, "streaming alone answers the filter");
 });

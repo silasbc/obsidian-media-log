@@ -310,9 +310,62 @@ var require_browse = __commonJS({
     function isGone(it) {
       return safeStr(it && it.video).toLowerCase() === "none";
     }
-    function isPlayable(it, hasFile) {
+    function isPlayable(it, hasFile, canStream) {
       const v = safeStr(it && it.video);
-      return !!(v && v.toLowerCase() !== "none" && hasFile && hasFile(it));
+      if (v && v.toLowerCase() !== "none" && hasFile && hasFile(it)) return true;
+      return !!(canStream && isStreamable(it));
+    }
+    var IG_CODE_RE = /instagram\.com\/(?:[^/?#]+\/)?(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i;
+    function igCodeOf(url) {
+      const m = IG_CODE_RE.exec(safeStr(url));
+      return m ? m[1] : "";
+    }
+    function embedPageFor(it) {
+      if (!it) return "";
+      const e = safeStr(it.embedUrl);
+      if (/^https:\/\/www\.instagram\.com\/[^?#]*\/embed/i.test(e)) return e;
+      const code = igCodeOf(it.sourceUrl || it.url);
+      return code ? `https://www.instagram.com/reel/${code}/embed/captioned/` : "";
+    }
+    function isStreamable(it) {
+      if (!it || safeStr(it.kind) === "post") return false;
+      return !!embedPageFor(it);
+    }
+    function extractVideoUrl(html) {
+      const h = safeStr(html);
+      let m = /\\"video_url\\":\\"((?:[^"\\]|\\.)*?)\\"/.exec(h);
+      let raw = m ? m[1] : "";
+      if (!raw) {
+        m = /"video_url"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(h);
+        raw = m ? m[1] : "";
+      }
+      if (!raw) {
+        m = /https?:(?:\\*\/){2}[a-z0-9.-]*cdninstagram\.com[^"'\s]*?\.mp4[^"'\s]*/i.exec(h);
+        raw = m ? m[0] : "";
+      }
+      if (!raw) return "";
+      let url = raw;
+      for (let i = 0; i < 3 && url.indexOf("\\") >= 0; i++) {
+        try {
+          url = JSON.parse('"' + url + '"');
+        } catch {
+          break;
+        }
+      }
+      url = url.replace(/\\+\//g, "/").replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+      return /^https:\/\/[^\s"'<>]+$/i.test(url) ? url : "";
+    }
+    function cdnExpiry(url) {
+      const m = /[?&]oe=([0-9A-Fa-f]{6,10})(?:&|$)/.exec(safeStr(url));
+      if (!m) return 0;
+      const t = parseInt(m[1], 16) * 1e3;
+      return Number.isFinite(t) && t > 0 ? t : 0;
+    }
+    function streamFresh(entry, nowMs, marginMs, defaultMs) {
+      if (!entry || !entry.url) return false;
+      const margin = marginMs == null ? 10 * 60 * 1e3 : marginMs;
+      const exp = entry.expires || (entry.fetched || 0) + (defaultMs == null ? 6 * 60 * 60 * 1e3 : defaultMs);
+      return exp - margin > nowMs;
     }
     function hashtagsOf(text) {
       const out = [];
@@ -330,25 +383,26 @@ var require_browse = __commonJS({
       if (!it || (it.tags || []).length > 0) return [];
       return hashtagsOf(it.caption);
     }
-    function matchesReview(item, filter) {
-      if (filter === "unwatched") return !item.watched && !isGone(item);
+    function matchesReview(item, filter, canStream) {
+      if (filter === "unwatched") return !item.watched && (!isGone(item) || !!canStream && isStreamable(item));
       if (filter === "watched") return !!item.watched;
       if (filter === "starred") return !!item.starred;
       return true;
     }
-    function baseFilter(items, f) {
+    function baseFilter(items, f, opts) {
+      const canStream = !!(opts && opts.canStream);
       return (items || []).filter((it) => {
         if (f.platform && it.platform !== f.platform) return false;
         if (f.tag && !(it.tags || []).includes(f.tag)) return false;
-        if (f.review && !matchesReview(it, f.review)) return false;
+        if (f.review && !matchesReview(it, f.review, canStream)) return false;
         return true;
       });
     }
     function visibleList(items, filter, opts) {
       const f = filter || {};
       const o = opts || {};
-      let L = baseFilter(items, f);
-      if (f.playable && o.hasFile) L = L.filter((it) => isPlayable(it, o.hasFile));
+      let L = baseFilter(items, f, o);
+      if (f.playable && (o.hasFile || o.canStream)) L = L.filter((it) => isPlayable(it, o.hasFile, o.canStream));
       L = filterByTags(L, f.tags, f.untagged);
       if (f.month) L = filterByMonth(L, f.month);
       if (f.onDay) L = onThisDayItems(L, o.todayMMDD || "");
@@ -417,6 +471,12 @@ var require_browse = __commonJS({
       posterCandidates,
       isGone,
       isPlayable,
+      igCodeOf,
+      embedPageFor,
+      isStreamable,
+      extractVideoUrl,
+      cdnExpiry,
+      streamFresh,
       hashtagsOf,
       tagsFromCaption,
       matchesReview,
@@ -432,7 +492,7 @@ var require_browse = __commonJS({
 var require_sifi = __commonJS({
   "src/sifi.js"(exports2, module2) {
     "use strict";
-    var { Modal: Modal2, Notice: Notice2, Setting: Setting2, setIcon: setIcon2 } = require("obsidian");
+    var { Modal: Modal2, Notice: Notice2, Setting: Setting2, setIcon: setIcon2, requestUrl: requestUrl2 } = require("obsidian");
     var browse2 = require_browse();
     var SIFI_DEFAULTS = {
       pageSize: 64,
@@ -445,8 +505,10 @@ var require_sifi = __commonJS({
       bottomBar: true,
       autoAdvance: true,
       // owner ask 2026-09-05: a visible, remembered toggle
-      playerPlayableOnly: true
-      // the pop-up and TV play only what has a local video on this device
+      playerPlayableOnly: true,
+      // the pop-up and TV play only what plays on this device
+      streamRemote: true
+      // owner 2026-09-05 ("if streaming fixes it then do that"): no local copy → stream from Instagram
     };
     var THUMB_LIVE_MAX = 24;
     var WATCH_DWELL_MS = 3e3;
@@ -456,6 +518,10 @@ var require_sifi = __commonJS({
     var TAG_CHIP_LIMIT = 24;
     var POSTER_MAX_WIDTH = 540;
     var POSTER_TIMEOUT_MS = 12e3;
+    var STREAM_MARGIN_MS = 10 * 60 * 1e3;
+    var STREAM_FAIL_TTL_MS = 15 * 60 * 1e3;
+    var STREAM_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+    var isVid = (media) => !!media && (media.kind === "video" || media.kind === "stream");
     var BOTTOM_BAR_TABS = [
       { label: "Home", link: "Home", icon: "<path d='M3 10.5 12 3l9 7.5'/><path d='M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5'/>" },
       { label: "Train", link: "Dashboard", icon: "<path d='M8 12h8'/><rect x='4' y='7.5' width='3' height='9' rx='1'/><rect x='17' y='7.5' width='3' height='9' rx='1'/><path d='M2 10.5v3'/><path d='M22 10.5v3'/>" },
@@ -585,14 +651,81 @@ var require_sifi = __commonJS({
           })
         );
       }
-      function whyNoVideo(app, item) {
+      function whyNoVideo(app, item, streams) {
         const v = String(item.video || "");
         if (v && v !== "none" && app.vault.getAbstractFileByPath(v)) return "";
+        if (streams && streams.can(item)) {
+          if (!streams.failed(item)) return "Streaming from Instagram \u2014 no local copy on this device.";
+          return v === "none" ? "Instagram would not hand over this video just now, and there is no copy anywhere \u2014 open it on Instagram." : "Instagram would not hand over this video just now \u2014 playing its embed instead, which will not autoplay.";
+        }
         if (v === "none") return "Instagram refused this download five times \u2014 no copy to play; open it on Instagram.";
         if (v) return "The video file has not synced to this device yet \u2014 playing Instagram's embed, which will not autoplay.";
         if (item.kind === "post") return "An Instagram post (image); no video was captured for it.";
         if (/^https:/.test(item.embedUrl || "")) return "No local video \u2014 playing Instagram's embed, which will not autoplay.";
         return "";
+      }
+      class StreamResolver {
+        constructor(plugin) {
+          this.plugin = plugin;
+          this.cache = /* @__PURE__ */ new Map();
+          this.inflight = /* @__PURE__ */ new Map();
+          this.fails = /* @__PURE__ */ new Map();
+        }
+        enabled() {
+          return this.plugin.settings.streamRemote !== false;
+        }
+        can(item) {
+          return this.enabled() && browse2.isStreamable(item);
+        }
+        failed(item) {
+          const at = item && this.fails.get(item.id);
+          return !!at && Date.now() - at < STREAM_FAIL_TTL_MS;
+        }
+        // A fresh cached link, or "".
+        peek(item) {
+          const e = item && this.cache.get(item.id);
+          return e && browse2.streamFresh(e, Date.now(), STREAM_MARGIN_MS) ? e.url : "";
+        }
+        async resolve(item) {
+          if (!this.can(item)) return "";
+          const hit = this.peek(item);
+          if (hit) return hit;
+          if (this.failed(item)) return "";
+          if (this.inflight.has(item.id)) return this.inflight.get(item.id);
+          const p = this.fetch(item).finally(() => this.inflight.delete(item.id));
+          this.inflight.set(item.id, p);
+          return p;
+        }
+        async fetch(item) {
+          const page = browse2.embedPageFor(item);
+          try {
+            const r = await requestUrl2({ url: page, method: "GET", headers: { "User-Agent": STREAM_UA, Accept: "text/html" }, throw: false });
+            const url = r && r.status === 200 ? browse2.extractVideoUrl(r.text) : "";
+            if (!url) {
+              this.fails.set(item.id, Date.now());
+              return "";
+            }
+            this.cache.set(item.id, { url, expires: browse2.cdnExpiry(url), fetched: Date.now() });
+            this.fails.delete(item.id);
+            return url;
+          } catch (e) {
+            this.fails.set(item.id, Date.now());
+            return "";
+          }
+        }
+      }
+      function tryPlay(player, onMuted, prime) {
+        if (typeof player.play !== "function") return;
+        const p = player.play();
+        if (!p || typeof p.catch !== "function") return;
+        p.catch(() => {
+          if (prime || !player.isConnected || !player.getAttribute("src")) return;
+          player.muted = true;
+          const q = player.play();
+          if (q && typeof q.catch === "function") q.catch(() => {
+          });
+          if (onMuted) onMuted(player);
+        });
       }
       function buildMedia(app, container, item, opts) {
         const o = opts || {};
@@ -600,6 +733,35 @@ var require_sifi = __commonJS({
         const shot = item.screenshot && app.vault.getAbstractFileByPath(item.screenshot);
         const poster = shot ? app.vault.getResourcePath(shot) : item.previewRemote || "";
         const video = item.video && item.video !== "none" && app.vault.getAbstractFileByPath(item.video);
+        const streams = o.streams;
+        if (!video && streams && streams.can(item)) {
+          const attr = { controls: "", preload: "auto", playsinline: "" };
+          if (o.autoplay) attr.autoplay = "";
+          if (o.loop) attr.loop = "";
+          const known = streams.peek(item);
+          if (known) attr.src = known;
+          const player = container.createEl("video", { cls, attr });
+          if (poster) player.setAttribute("poster", poster);
+          if (o.onEnded) player.addEventListener("ended", o.onEnded);
+          if (known) {
+            if (o.autoplay) tryPlay(player, o.onMuted);
+          } else {
+            if (o.autoplay) tryPlay(player, null, true);
+            streams.resolve(item).then((url) => {
+              if (!player.isConnected) return;
+              if (url) {
+                player.src = url;
+                if (o.autoplay) tryPlay(player, o.onMuted);
+                return;
+              }
+              const tmp = document.createElement("div");
+              const fb = buildMedia(app, tmp, item, Object.assign({}, o, { streams: null }));
+              player.replaceWith(fb.el);
+              if (o.onFallback) o.onFallback(fb);
+            });
+          }
+          return { kind: "stream", el: player };
+        }
         if (browse2.isGone(item)) {
           const gone = container.createDiv({ cls: cls + " mlog-detail__media--gone" });
           gone.createDiv({ cls: "mlog-detail__gone-title", text: "No local copy" });
@@ -620,18 +782,7 @@ var require_sifi = __commonJS({
           const player = container.createEl("video", { cls, attr });
           if (poster) player.setAttribute("poster", poster);
           if (o.onEnded) player.addEventListener("ended", o.onEnded);
-          if (o.autoplay && typeof player.play === "function") {
-            const p = player.play();
-            if (p && typeof p.catch === "function") {
-              p.catch(() => {
-                player.muted = true;
-                const q = player.play();
-                if (q && typeof q.catch === "function") q.catch(() => {
-                });
-                if (o.onMuted) o.onMuted(player);
-              });
-            }
-          }
+          if (o.autoplay) tryPlay(player, o.onMuted);
           return { kind: "video", el: player };
         }
         if (/^https:\/\//i.test(item.embedUrl)) {
@@ -930,13 +1081,26 @@ var require_sifi = __commonJS({
           this.paintWatched = null;
           this.pre = null;
         }
-        // Preload the next playable item's file into the browser cache.
+        // Preload the next playable item into the browser cache: its local file, or —
+        // with no local copy — ask Instagram for its link now so stepping is instant.
         preloadNext() {
           const len = this.list.length;
           const ni = browse2.nextIndex(this.idx, len, this.loop);
           const next = ni >= 0 ? this.list[ni] : null;
           const file = next && next.video && next.video !== "none" && this.app.vault.getAbstractFileByPath(next.video);
-          if (!file) return;
+          if (!file) {
+            const streams = this.view.streams();
+            if (next && streams.can(next)) {
+              streams.resolve(next).then((url) => {
+                if (url && this.overlay && this.list[browse2.nextIndex(this.idx, this.list.length, this.loop)] === next) this.warm(url);
+              });
+            }
+            return;
+          }
+          this.warm(this.app.vault.getResourcePath(file));
+        }
+        warm(src) {
+          if (!this.overlay) return;
           if (!this.pre) {
             this.pre = document.createElement("video");
             this.pre.preload = "auto";
@@ -944,7 +1108,6 @@ var require_sifi = __commonJS({
             this.pre.style.cssText = "position:fixed;left:-9999px;top:0;width:10px;height:10px;opacity:0;pointer-events:none;";
             document.body.appendChild(this.pre);
           }
-          const src = this.app.vault.getResourcePath(file);
           if (this.pre.getAttribute("src") !== src) {
             this.pre.src = src;
             try {
@@ -1009,11 +1172,19 @@ var require_sifi = __commonJS({
             autoplay: true,
             loop: this.modal && !this.auto,
             // the pop-up loops a reel until auto-advance is switched on
+            streams: this.view.streams(),
             onEnded: () => {
               if (this.auto) this.step(1);
             },
             onMuted: (player) => {
               if (this.ctl) unmuteBadge(this.ctl, player);
+            },
+            onFallback: (fb) => {
+              if (!this.overlay || this.idx !== idx) return;
+              media.kind = fb.kind;
+              media.el = fb.el;
+              if (this.auto && !isVid(media)) this.adv = browse2.advInit(this.dwell, 0, Date.now());
+              this.paintControls(item, media);
             }
           });
           this.paintControls(item, media);
@@ -1026,7 +1197,7 @@ var require_sifi = __commonJS({
             }
             if (this.paintWatched) this.paintWatched();
           }, WATCH_DWELL_MS);
-          if (this.auto && media.kind !== "video") this.adv = browse2.advInit(this.dwell, 0, Date.now());
+          if (this.auto && !isVid(media)) this.adv = browse2.advInit(this.dwell, 0, Date.now());
           this.timer = setInterval(() => {
             if (!this.adv) return;
             const r = browse2.advanceTick(this.adv, Date.now());
@@ -1052,7 +1223,7 @@ var require_sifi = __commonJS({
           const ctl = this.ctl;
           ctl.empty();
           ctl.createDiv({ cls: "mlog-tv__title", text: `${this.idx + 1} / ${this.list.length} \xB7 ${item.title}` });
-          const why = whyNoVideo(this.app, item);
+          const why = whyNoVideo(this.app, item, this.view.streams());
           if (why) ctl.createDiv({ cls: "mlog-tv__why", text: why });
           const cap = ctl.createDiv({ cls: "mlog-tv__caption" });
           this.view.captionFor(item).then((text) => {
@@ -1082,8 +1253,8 @@ var require_sifi = __commonJS({
             () => {
               this.auto = !this.auto;
               if (this.modal) this.view.setAutoAdvance(this.auto);
-              this.adv = this.auto && media.kind !== "video" ? browse2.advInit(this.dwell, 0, Date.now()) : null;
-              if (media.kind === "video" && media.el) media.el.loop = this.modal && !this.auto;
+              this.adv = this.auto && !isVid(media) ? browse2.advInit(this.dwell, 0, Date.now()) : null;
+              if (isVid(media) && media.el) media.el.loop = this.modal && !this.auto;
               pp.setText(this.auto ? "Auto: on" : "Auto: off");
               pp.classList.toggle("mlog-tv__btn--active", this.auto);
             },
@@ -1407,8 +1578,14 @@ var require_sifi = __commonJS({
         hasFile(it) {
           return !!(it && it.video && this.app.vault.getAbstractFileByPath(it.video));
         }
+        // One resolver per plugin, made on first use (settings may still be loading in the constructor).
+        streams() {
+          const p = this.plugin;
+          if (!p.streams) p.streams = new StreamResolver(p);
+          return p.streams;
+        }
         listOpts() {
-          return { todayMMDD: this.todayMMDD, pageSize: this.pageSize(), hasFile: (it) => this.hasFile(it) };
+          return { todayMMDD: this.todayMMDD, pageSize: this.pageSize(), hasFile: (it) => this.hasFile(it), canStream: this.streams().enabled() };
         }
         // The note body (caption, hashtags) for one item — cached per file.
         async captionFor(item) {
@@ -1433,7 +1610,7 @@ var require_sifi = __commonJS({
         playlist() {
           const base = this.filtered();
           if (this.plugin.settings.playerPlayableOnly === false) return base;
-          const playable = base.filter((it) => browse2.isPlayable(it, (x) => this.hasFile(x)));
+          const playable = base.filter((it) => browse2.isPlayable(it, (x) => this.hasFile(x), this.streams().enabled()));
           return playable.length ? playable : base;
         }
         tvList(mode) {
@@ -1545,11 +1722,12 @@ var require_sifi = __commonJS({
               this.renderGrid();
             });
           }
-          const playableN = browse2.visibleList(this.items || [], { ...f, playable: false, seed: null }, this.listOpts()).filter((it) => this.hasFile(it)).length;
+          const canStream = this.streams().enabled();
+          const playableN = browse2.visibleList(this.items || [], { ...f, playable: false, seed: null }, this.listOpts()).filter((it) => browse2.isPlayable(it, (x) => this.hasFile(x), canStream)).length;
           mk(`Playable here \xB7 ${playableN}`, !!f.playable, () => {
             f.playable = !f.playable;
             this.renderGrid();
-          }, "Only items with a local video on this device");
+          }, canStream ? "Only items that play on this device: a local video, or a reel Instagram will stream" : "Only items with a local video on this device");
           if ((this.items || []).length) {
             mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
             mk("TV", false, () => this.openTv(), "TV mode");
@@ -1675,7 +1853,7 @@ var require_sifi = __commonJS({
             cls: selected ? "mlog-card mlog-card--selected" : "mlog-card",
             attr: { role: "button", tabindex: "0", "data-id": item.id }
           });
-          const gone = browse2.isGone(item);
+          const gone = browse2.isGone(item) && !this.streams().can(item);
           if (gone) card.classList.add("mlog-card--gone");
           const thumb = card.createDiv({ cls: "mlog-card__thumb" });
           thumb.createDiv({ cls: "mlog-card__placeholder", text: gone ? "No copy" : item.kind && item.kind !== "link" ? item.kind : item.platform });
@@ -1724,9 +1902,15 @@ var require_sifi = __commonJS({
         // Detail pane: autoplaying, sized for the item's shape; when a video ends the
         // next visible item is selected (owner ask 2026-09-05), or it loops if auto-advance is off.
         renderMedia(container, item) {
+          const streams = this.streams();
+          let whyEl = null;
           buildMedia(this.app, container, item, {
             autoplay: true,
             loop: !this.autoAdvance,
+            streams,
+            onFallback: () => {
+              if (whyEl) whyEl.setText(whyNoVideo(this.app, item, streams));
+            },
             onMuted: (player) => unmuteBadge(container, player),
             onEnded: () => {
               if (!this.autoAdvance || this.tv) return;
@@ -1735,8 +1919,8 @@ var require_sifi = __commonJS({
               if (i >= 0 && i < visible.length - 1) this.selectItem(visible[i + 1]);
             }
           });
-          const why = whyNoVideo(this.app, item);
-          if (why) container.createDiv({ cls: "mlog-detail__why", text: why });
+          const why = whyNoVideo(this.app, item, streams);
+          if (why) whyEl = container.createDiv({ cls: "mlog-detail__why", text: why });
           const cap = container.createDiv({ cls: "mlog-detail__caption" });
           this.captionFor(item).then((text) => {
             if (this.selected && this.selected.id === item.id && text) cap.setText(text);
@@ -1792,9 +1976,15 @@ var require_sifi = __commonJS({
               await this.plugin.saveSettings();
             })
           );
-          new Setting2(c).setName("Players use only what plays here").setDesc("TV mode and the pop-up draw only from items with a local video on this device; embeds and gone reels are skipped.").addToggle(
+          new Setting2(c).setName("Players use only what plays here").setDesc("TV mode and the pop-up draw only from items that play on this device: a local video, or a reel Instagram will stream. Embeds and posts are skipped.").addToggle(
             (t) => t.setValue(s.playerPlayableOnly !== false).onChange(async (v) => {
               s.playerPlayableOnly = v;
+              await this.plugin.saveSettings();
+            })
+          );
+          new Setting2(c).setName("Stream from Instagram").setDesc("No local copy on this device? Fetch the reel's video link from Instagram and stream it \u2014 it autoplays; needs internet. Off: play Instagram's embed instead.").addToggle(
+            (t) => t.setValue(s.streamRemote !== false).onChange(async (v) => {
+              s.streamRemote = v;
               await this.plugin.saveSettings();
             })
           );
@@ -1832,6 +2022,7 @@ var require_sifi = __commonJS({
         ThumbBudget,
         BottomBar,
         PosterFactory,
+        StreamResolver,
         buildMedia,
         loadCaptions,
         keepOne,

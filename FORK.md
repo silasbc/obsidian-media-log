@@ -28,6 +28,7 @@ Ported from the old Media Library surface (shipped there 2026-08-07/08), now on 
 7. **Live refresh + poster frames.** The view watches the items folder and repaints in place (scroll, page, and selection kept); a Refresh button re-reads on demand. On desktop the plugin grabs one frame from every local video that has no screenshot and writes it as the screenshot asset, so reels get real thumbnails without the runner.
 8. **Guide button and phone bottom bar.** Guide opens the vault's Media guide (setting). On phones the Select bottom bar (Home, Train, Health, Media, Mauston) mounts inside the library and hides while a player is open.
 9. **Phone pop-up player.** On a phone, tapping a card opens the item in the same full-screen player instead of scrolling to the detail pane above the grid. It opens synchronously inside the tap, so iOS allows playback with sound; the reel loops until auto-advance is switched on; Prev/Next stop at the list's edges; a scrim tap closes; and the grid keeps its scroll position. Open source and Open note sit in the second row.
+10. **Stream from Instagram** (owner, 2026-09-05: "if streaming fixes it then do that"). With no local copy on this device, the player fetches the reel's embed page with a plain request, pulls Instagram's own CDN link out of it (good for about a day), and streams it in a native `<video>` — which autoplays where the embed never does. Reels the runner had given up on (`video: none`) play this way too. Links are cached per item for the session, a miss is remembered for fifteen minutes and the embed takes over, and the next reel's link is fetched ahead in the players. Setting "Stream from Instagram", default on. Playable-here and the players' lists count a streamable reel as playable.
 
 Settings under "Sifi's edition": items per page, portrait cards, TV dwell seconds, and the duplicate-scan log path.
 
@@ -40,6 +41,10 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 - Deploy = copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/media-log/` and restart Obsidian (or toggle the plugin off and on).
 
 ## Changelog (Sifi's edition)
+
+### 1.4.0-sifi.7 — 2026-09-05
+
+- Stream from Instagram when there is no local copy: embed page → CDN link → native `<video>` with autoplay; `video: none` reels play again; links cached, misses remembered, next link fetched ahead. Playable-here counts streamable reels. Unit tests for the link extraction, expiry, and freshness; smoke test for the resolver (cache, shared in-flight request, remembered miss, setting off).
 
 ### 1.4.0-sifi.6 — 2026-09-05
 

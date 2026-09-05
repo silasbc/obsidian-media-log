@@ -20,7 +20,7 @@
 //   - Guide button, duplicate scan with keep-one and a quarantine log
 "use strict";
 
-const { Modal, Notice, Setting, setIcon } = require("obsidian");
+const { Modal, Notice, Setting, setIcon, requestUrl } = require("obsidian");
 const browse = require("./browse");
 
 const SIFI_DEFAULTS = {
@@ -32,7 +32,8 @@ const SIFI_DEFAULTS = {
   posterFrames: true,
   bottomBar: true,
   autoAdvance: true, // owner ask 2026-09-05: a visible, remembered toggle
-  playerPlayableOnly: true, // the pop-up and TV play only what has a local video on this device
+  playerPlayableOnly: true, // the pop-up and TV play only what plays on this device
+  streamRemote: true, // owner 2026-09-05 ("if streaming fixes it then do that"): no local copy → stream from Instagram
 };
 const THUMB_LIVE_MAX = 24;
 const WATCH_DWELL_MS = 3000;
@@ -42,6 +43,10 @@ const REFRESH_DEBOUNCE_MS = 900;
 const TAG_CHIP_LIMIT = 24; // the busiest tags first; the rest behind a More toggle
 const POSTER_MAX_WIDTH = 540;
 const POSTER_TIMEOUT_MS = 12000;
+const STREAM_MARGIN_MS = 10 * 60 * 1000; // a cached Instagram link is dropped this long before it expires
+const STREAM_FAIL_TTL_MS = 15 * 60 * 1000; // a miss is remembered this long before Instagram is asked again
+const STREAM_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+const isVid = (media) => !!media && (media.kind === "video" || media.kind === "stream");
 
 // The shared Select bottom bar's tabs (staging/lib/tabbar-snippet.js v6), so
 // the plugin view on a phone offers the same doors as every note surface.
@@ -198,9 +203,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
 
   // One honest line for an item that is not playing a local video (owner: "like
   // that charlie munger didnt auto play").
-  function whyNoVideo(app, item) {
+  function whyNoVideo(app, item, streams) {
     const v = String(item.video || "");
     if (v && v !== "none" && app.vault.getAbstractFileByPath(v)) return "";
+    if (streams && streams.can(item)) {
+      if (!streams.failed(item)) return "Streaming from Instagram — no local copy on this device.";
+      return v === "none"
+        ? "Instagram would not hand over this video just now, and there is no copy anywhere — open it on Instagram."
+        : "Instagram would not hand over this video just now — playing its embed instead, which will not autoplay.";
+    }
     if (v === "none") return "Instagram refused this download five times — no copy to play; open it on Instagram.";
     if (v) return "The video file has not synced to this device yet — playing Instagram's embed, which will not autoplay.";
     if (item.kind === "post") return "An Instagram post (image); no video was captured for it.";
@@ -208,14 +219,126 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     return "";
   }
 
+  // ---- streaming from Instagram -----------------------------------------------
+  // No local copy on this device? The reel's embed page, fetched with a plain
+  // request, carries Instagram's own CDN link for the video (good for about a
+  // day). The players stream it in a native <video>, which autoplays where the
+  // embed never does. Links are cached per item for the session; a miss is
+  // remembered briefly so a wall is never hammered. One resolver per plugin.
+  class StreamResolver {
+    constructor(plugin) {
+      this.plugin = plugin;
+      this.cache = new Map(); // item id → { url, expires, fetched }
+      this.inflight = new Map(); // item id → promise
+      this.fails = new Map(); // item id → when it last missed
+    }
+
+    enabled() {
+      return this.plugin.settings.streamRemote !== false;
+    }
+
+    can(item) {
+      return this.enabled() && browse.isStreamable(item);
+    }
+
+    failed(item) {
+      const at = item && this.fails.get(item.id);
+      return !!at && Date.now() - at < STREAM_FAIL_TTL_MS;
+    }
+
+    // A fresh cached link, or "".
+    peek(item) {
+      const e = item && this.cache.get(item.id);
+      return e && browse.streamFresh(e, Date.now(), STREAM_MARGIN_MS) ? e.url : "";
+    }
+
+    async resolve(item) {
+      if (!this.can(item)) return "";
+      const hit = this.peek(item);
+      if (hit) return hit;
+      if (this.failed(item)) return "";
+      if (this.inflight.has(item.id)) return this.inflight.get(item.id);
+      const p = this.fetch(item).finally(() => this.inflight.delete(item.id));
+      this.inflight.set(item.id, p);
+      return p;
+    }
+
+    async fetch(item) {
+      const page = browse.embedPageFor(item);
+      try {
+        const r = await requestUrl({ url: page, method: "GET", headers: { "User-Agent": STREAM_UA, Accept: "text/html" }, throw: false });
+        const url = r && r.status === 200 ? browse.extractVideoUrl(r.text) : "";
+        if (!url) {
+          this.fails.set(item.id, Date.now());
+          return "";
+        }
+        this.cache.set(item.id, { url, expires: browse.cdnExpiry(url), fetched: Date.now() });
+        this.fails.delete(item.id);
+        return url;
+      } catch (e) {
+        this.fails.set(item.id, Date.now());
+        return "";
+      }
+    }
+  }
+
+  // play() with the fallback the phones need: refused sound → play muted, say so.
+  // `prime` is the call made inside a tap before a stream has a source: it only
+  // unlocks the element for later playback and must never trigger the fallback.
+  function tryPlay(player, onMuted, prime) {
+    if (typeof player.play !== "function") return;
+    const p = player.play();
+    if (!p || typeof p.catch !== "function") return;
+    p.catch(() => {
+      if (prime || !player.isConnected || !player.getAttribute("src")) return;
+      player.muted = true; // the webview refused sound without a gesture — play muted rather than not at all
+      const q = player.play();
+      if (q && typeof q.catch === "function") q.catch(() => {});
+      if (onMuted) onMuted(player);
+    });
+  }
+
   // ---- the media element, shared by the detail pane and the players -----------
-  // Local video → embed → image (vault screenshot or remote preview) → placeholder.
+  // Local video → stream from Instagram → embed → image (vault screenshot or
+  // remote preview) → placeholder.
   function buildMedia(app, container, item, opts) {
     const o = opts || {};
     const cls = "mlog-detail__media " + (browse.isPortrait(item) ? "mlog-detail__media--portrait" : "mlog-detail__media--wide");
     const shot = item.screenshot && app.vault.getAbstractFileByPath(item.screenshot);
     const poster = shot ? app.vault.getResourcePath(shot) : item.previewRemote || "";
     const video = item.video && item.video !== "none" && app.vault.getAbstractFileByPath(item.video);
+    const streams = o.streams;
+    if (!video && streams && streams.can(item)) {
+      // The element is made now, inside the tap that opened the player (iOS keeps
+      // the gesture for sound); the source lands when the link does. If Instagram
+      // will not hand it over, the embed or the gone card takes the element's place.
+      const attr = { controls: "", preload: "auto", playsinline: "" };
+      if (o.autoplay) attr.autoplay = "";
+      if (o.loop) attr.loop = "";
+      const known = streams.peek(item);
+      if (known) attr.src = known;
+      const player = container.createEl("video", { cls, attr });
+      if (poster) player.setAttribute("poster", poster);
+      if (o.onEnded) player.addEventListener("ended", o.onEnded);
+      if (known) {
+        if (o.autoplay) tryPlay(player, o.onMuted);
+      } else {
+        if (o.autoplay) tryPlay(player, null, true);
+        streams.resolve(item).then((url) => {
+          if (!player.isConnected) return;
+          if (url) {
+            player.src = url;
+            if (o.autoplay) tryPlay(player, o.onMuted);
+            return;
+          }
+          const tmp = document.createElement("div");
+          const fb = buildMedia(app, tmp, item, Object.assign({}, o, { streams: null }));
+          player.replaceWith(fb.el);
+          if (o.onFallback) o.onFallback(fb);
+        });
+      }
+      return { kind: "stream", el: player };
+    }
     if (browse.isGone(item)) {
       // Instagram refused the download five times: the reel is private or removed.
       // No embed (it only ends in "watch on Instagram"); a plain card instead.
@@ -238,17 +361,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       const player = container.createEl("video", { cls, attr });
       if (poster) player.setAttribute("poster", poster);
       if (o.onEnded) player.addEventListener("ended", o.onEnded);
-      if (o.autoplay && typeof player.play === "function") {
-        const p = player.play();
-        if (p && typeof p.catch === "function") {
-          p.catch(() => {
-            player.muted = true; // the webview refused sound without a gesture — play muted rather than not at all
-            const q = player.play();
-            if (q && typeof q.catch === "function") q.catch(() => {});
-            if (o.onMuted) o.onMuted(player);
-          });
-        }
-      }
+      if (o.autoplay) tryPlay(player, o.onMuted);
       return { kind: "video", el: player };
     }
     if (/^https:\/\//i.test(item.embedUrl)) {
@@ -582,13 +695,27 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.pre = null; // the next reel, fetched ahead so auto-advance is instant
     }
 
-    // Preload the next playable item's file into the browser cache.
+    // Preload the next playable item into the browser cache: its local file, or —
+    // with no local copy — ask Instagram for its link now so stepping is instant.
     preloadNext() {
       const len = this.list.length;
       const ni = browse.nextIndex(this.idx, len, this.loop);
       const next = ni >= 0 ? this.list[ni] : null;
       const file = next && next.video && next.video !== "none" && this.app.vault.getAbstractFileByPath(next.video);
-      if (!file) return;
+      if (!file) {
+        const streams = this.view.streams();
+        if (next && streams.can(next)) {
+          streams.resolve(next).then((url) => {
+            if (url && this.overlay && this.list[browse.nextIndex(this.idx, this.list.length, this.loop)] === next) this.warm(url);
+          });
+        }
+        return;
+      }
+      this.warm(this.app.vault.getResourcePath(file));
+    }
+
+    warm(src) {
+      if (!this.overlay) return;
       if (!this.pre) {
         this.pre = document.createElement("video");
         this.pre.preload = "auto";
@@ -596,7 +723,6 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         this.pre.style.cssText = "position:fixed;left:-9999px;top:0;width:10px;height:10px;opacity:0;pointer-events:none;";
         document.body.appendChild(this.pre);
       }
-      const src = this.app.vault.getResourcePath(file);
       if (this.pre.getAttribute("src") !== src) {
         this.pre.src = src;
         try {
@@ -664,11 +790,20 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       const media = buildMedia(this.app, this.panel, item, {
         autoplay: true,
         loop: this.modal && !this.auto, // the pop-up loops a reel until auto-advance is switched on
+        streams: this.view.streams(),
         onEnded: () => {
           if (this.auto) this.step(1);
         },
         onMuted: (player) => {
           if (this.ctl) unmuteBadge(this.ctl, player);
+        },
+        onFallback: (fb) => {
+          // Instagram would not stream this one: behave as the embed/gone card from here on
+          if (!this.overlay || this.idx !== idx) return;
+          media.kind = fb.kind;
+          media.el = fb.el;
+          if (this.auto && !isVid(media)) this.adv = browse.advInit(this.dwell, 0, Date.now());
+          this.paintControls(item, media);
         },
       });
       this.paintControls(item, media);
@@ -683,7 +818,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         if (this.paintWatched) this.paintWatched();
       }, WATCH_DWELL_MS);
       // Local video advances when it ends; embeds and images advance on the dwell timer.
-      if (this.auto && media.kind !== "video") this.adv = browse.advInit(this.dwell, 0, Date.now());
+      if (this.auto && !isVid(media)) this.adv = browse.advInit(this.dwell, 0, Date.now());
       this.timer = setInterval(() => {
         if (!this.adv) return;
         const r = browse.advanceTick(this.adv, Date.now());
@@ -711,7 +846,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       const ctl = this.ctl;
       ctl.empty();
       ctl.createDiv({ cls: "mlog-tv__title", text: `${this.idx + 1} / ${this.list.length} · ${item.title}` });
-      const why = whyNoVideo(this.app, item);
+      const why = whyNoVideo(this.app, item, this.view.streams());
       if (why) ctl.createDiv({ cls: "mlog-tv__why", text: why });
       const cap = ctl.createDiv({ cls: "mlog-tv__caption" });
       this.view.captionFor(item).then((text) => {
@@ -741,8 +876,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         () => {
           this.auto = !this.auto;
           if (this.modal) this.view.setAutoAdvance(this.auto);
-          this.adv = this.auto && media.kind !== "video" ? browse.advInit(this.dwell, 0, Date.now()) : null;
-          if (media.kind === "video" && media.el) media.el.loop = this.modal && !this.auto;
+          this.adv = this.auto && !isVid(media) ? browse.advInit(this.dwell, 0, Date.now()) : null;
+          if (isVid(media) && media.el) media.el.loop = this.modal && !this.auto;
           pp.setText(this.auto ? "Auto: on" : "Auto: off");
           pp.classList.toggle("mlog-tv__btn--active", this.auto);
         },
@@ -1101,8 +1236,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       return !!(it && it.video && this.app.vault.getAbstractFileByPath(it.video));
     }
 
+    // One resolver per plugin, made on first use (settings may still be loading in the constructor).
+    streams() {
+      const p = this.plugin;
+      if (!p.streams) p.streams = new StreamResolver(p);
+      return p.streams;
+    }
+
     listOpts() {
-      return { todayMMDD: this.todayMMDD, pageSize: this.pageSize(), hasFile: (it) => this.hasFile(it) };
+      return { todayMMDD: this.todayMMDD, pageSize: this.pageSize(), hasFile: (it) => this.hasFile(it), canStream: this.streams().enabled() };
     }
 
     // The note body (caption, hashtags) for one item — cached per file.
@@ -1129,7 +1271,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     playlist() {
       const base = this.filtered();
       if (this.plugin.settings.playerPlayableOnly === false) return base;
-      const playable = base.filter((it) => browse.isPlayable(it, (x) => this.hasFile(x)));
+      const playable = base.filter((it) => browse.isPlayable(it, (x) => this.hasFile(x), this.streams().enabled()));
       return playable.length ? playable : base;
     }
 
@@ -1252,11 +1394,12 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           this.renderGrid();
         });
       }
-      const playableN = browse.visibleList(this.items || [], { ...f, playable: false, seed: null }, this.listOpts()).filter((it) => this.hasFile(it)).length;
+      const canStream = this.streams().enabled();
+      const playableN = browse.visibleList(this.items || [], { ...f, playable: false, seed: null }, this.listOpts()).filter((it) => browse.isPlayable(it, (x) => this.hasFile(x), canStream)).length;
       mk(`Playable here · ${playableN}`, !!f.playable, () => {
         f.playable = !f.playable;
         this.renderGrid();
-      }, "Only items with a local video on this device");
+      }, canStream ? "Only items that play on this device: a local video, or a reel Instagram will stream" : "Only items with a local video on this device");
       if ((this.items || []).length) {
         mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
         mk("TV", false, () => this.openTv(), "TV mode");
@@ -1389,7 +1532,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         cls: selected ? "mlog-card mlog-card--selected" : "mlog-card",
         attr: { role: "button", tabindex: "0", "data-id": item.id },
       });
-      const gone = browse.isGone(item);
+      const gone = browse.isGone(item) && !this.streams().can(item); // a refused download still streams
       if (gone) card.classList.add("mlog-card--gone");
       const thumb = card.createDiv({ cls: "mlog-card__thumb" });
       thumb.createDiv({ cls: "mlog-card__placeholder", text: gone ? "No copy" : item.kind && item.kind !== "link" ? item.kind : item.platform });
@@ -1440,9 +1583,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     // Detail pane: autoplaying, sized for the item's shape; when a video ends the
     // next visible item is selected (owner ask 2026-09-05), or it loops if auto-advance is off.
     renderMedia(container, item) {
+      const streams = this.streams();
+      let whyEl = null;
       buildMedia(this.app, container, item, {
         autoplay: true,
         loop: !this.autoAdvance,
+        streams,
+        onFallback: () => {
+          if (whyEl) whyEl.setText(whyNoVideo(this.app, item, streams));
+        },
         onMuted: (player) => unmuteBadge(container, player),
         onEnded: () => {
           if (!this.autoAdvance || this.tv) return;
@@ -1451,8 +1600,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           if (i >= 0 && i < visible.length - 1) this.selectItem(visible[i + 1]);
         },
       });
-      const why = whyNoVideo(this.app, item);
-      if (why) container.createDiv({ cls: "mlog-detail__why", text: why });
+      const why = whyNoVideo(this.app, item, streams);
+      if (why) whyEl = container.createDiv({ cls: "mlog-detail__why", text: why });
       const cap = container.createDiv({ cls: "mlog-detail__caption" });
       this.captionFor(item).then((text) => {
         if (this.selected && this.selected.id === item.id && text) cap.setText(text);
@@ -1525,10 +1674,19 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         );
       new Setting(c)
         .setName("Players use only what plays here")
-        .setDesc("TV mode and the pop-up draw only from items with a local video on this device; embeds and gone reels are skipped.")
+        .setDesc("TV mode and the pop-up draw only from items that play on this device: a local video, or a reel Instagram will stream. Embeds and posts are skipped.")
         .addToggle((t) =>
           t.setValue(s.playerPlayableOnly !== false).onChange(async (v) => {
             s.playerPlayableOnly = v;
+            await this.plugin.saveSettings();
+          })
+        );
+      new Setting(c)
+        .setName("Stream from Instagram")
+        .setDesc("No local copy on this device? Fetch the reel's video link from Instagram and stream it — it autoplays; needs internet. Off: play Instagram's embed instead.")
+        .addToggle((t) =>
+          t.setValue(s.streamRemote !== false).onChange(async (v) => {
+            s.streamRemote = v;
             await this.plugin.saveSettings();
           })
         );
@@ -1579,6 +1737,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     ThumbBudget,
     BottomBar,
     PosterFactory,
+    StreamResolver,
     buildMedia,
     loadCaptions,
     keepOne,
