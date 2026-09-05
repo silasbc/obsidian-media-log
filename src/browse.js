@@ -405,10 +405,45 @@ function posterCandidates(items, hasVideo, hasShot) {
   });
 }
 
+// ---- playable, gone, hashtags ------------------------------------------------
+
+// `video: none` is the runner's sentinel: Instagram refused the download five
+// times — the reel is private or removed. Nothing will ever play it here.
+function isGone(it) {
+  return safeStr(it && it.video).toLowerCase() === "none";
+}
+
+// Playable on THIS device: a real local video file. `hasFile` answers whether
+// the referenced vault file exists here (the Mac may have it, the phone may not).
+function isPlayable(it, hasFile) {
+  const v = safeStr(it && it.video);
+  return !!(v && v.toLowerCase() !== "none" && hasFile && hasFile(it));
+}
+
+// Hashtags in a caption → clean, lower-case, deduped tag list (max 8).
+function hashtagsOf(text) {
+  const out = [];
+  const seen = new Set();
+  for (const m of String(text || "").matchAll(/(?:^|[^\p{L}\p{N}_#])#([\p{L}\p{N}_]{2,40})/gu)) {
+    const t = m[1].toLowerCase();
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+// Tags to write for an item that has none yet: its caption's hashtags.
+function tagsFromCaption(it) {
+  if (!it || ((it.tags || []).length > 0)) return [];
+  return hashtagsOf(it.caption);
+}
+
 // ---- the visible-list pipeline ----------------------------------------------
 
 function matchesReview(item, filter) {
-  if (filter === "unwatched") return !item.watched;
+  if (filter === "unwatched") return !item.watched && !isGone(item); // a gone reel can never be watched
   if (filter === "watched") return !!item.watched;
   if (filter === "starred") return !!item.starred;
   return true;
@@ -431,6 +466,7 @@ function visibleList(items, filter, opts) {
   const f = filter || {};
   const o = opts || {};
   let L = baseFilter(items, f);
+  if (f.playable && o.hasFile) L = L.filter((it) => isPlayable(it, o.hasFile));
   L = filterByTags(L, f.tags, f.untagged);
   if (f.month) L = filterByMonth(L, f.month);
   if (f.onDay) L = onThisDayItems(L, o.todayMMDD || "");
@@ -503,6 +539,10 @@ module.exports = {
   autoplayUrl,
   posterPath,
   posterCandidates,
+  isGone,
+  isPlayable,
+  hashtagsOf,
+  tagsFromCaption,
   matchesReview,
   baseFilter,
   visibleList,

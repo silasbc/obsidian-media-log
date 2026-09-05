@@ -41,6 +41,13 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.6 — 2026-09-05
+
+- Players draw only from what plays on this device (setting, default on); a "Playable here" chip filters the grid the same way.
+- Reels Instagram refused (`video: none`) show as "No local copy" with an Open on Instagram button — no embed, no New badge, not counted as unwatched.
+- Captions (the note body) under the media in the pane and the players; "Tag from captions" writes each untagged item's hashtags as its tags.
+- The next reel is fetched ahead so auto-advance is instant; an embed sitting through the dwell is not marked watched; a "Tap for sound" pill appears when the webview only allowed muted playback.
+
 ### 1.4.0-sifi.5 — 2026-09-05
 
 - A labelled Auto-advance toggle in the detail pane and the player ("Auto: on/off"), remembered as a setting.

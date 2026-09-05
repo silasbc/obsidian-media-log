@@ -113,6 +113,7 @@ const app = {
   assert.equal(plugin.settings.posterFrames, true);
   assert.equal(plugin.settings.bottomBar, true);
   assert.equal(plugin.settings.autoAdvance, true, "auto-advance is a remembered setting, on by default");
+  assert.equal(plugin.settings.playerPlayableOnly, true, "players skip embeds by default");
   assert.equal(MediaLogPlugin.sifi.BOTTOM_BAR_TABS.map((t) => t.label).join(","), "Home,Train,Health,Media,Mauston", "bottom bar mirrors tab bar v6");
 
   const items = await plugin.listItems();
@@ -144,6 +145,8 @@ const app = {
   assert.deepEqual(ids(view.tvList("unwatched")), [items[0].id, items[2].id]);
   view.filter.review = "watched";
   assert.deepEqual(ids(view.tvList("unwatched")), [items[1].id], "TV falls back to all when nothing is unwatched");
+  view.filter = { search: "", platform: "", tag: "", review: "" };
+  assert.equal(view.playlist().length, 3, "no local files in this fixture → the playlist falls back to everything visible");
 
   await MediaLogPlugin.sifi.loadCaptions(app, items, view.captionCache);
   assert.equal(items[0].caption, "Frug #lakepowell #fyp", "captions come from the note body");

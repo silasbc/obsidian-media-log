@@ -32,6 +32,7 @@ const SIFI_DEFAULTS = {
   posterFrames: true,
   bottomBar: true,
   autoAdvance: true, // owner ask 2026-09-05: a visible, remembered toggle
+  playerPlayableOnly: true, // the pop-up and TV play only what has a local video on this device
 };
 const THUMB_LIVE_MAX = 24;
 const WATCH_DWELL_MS = 3000;
@@ -199,7 +200,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
   function whyNoVideo(app, item) {
     const v = String(item.video || "");
     if (v && v !== "none" && app.vault.getAbstractFileByPath(v)) return "";
-    if (v === "none") return "Instagram refused this download five times — playing Instagram's embed, which will not autoplay.";
+    if (v === "none") return "Instagram refused this download five times — no copy to play; open it on Instagram.";
     if (v) return "The video file has not synced to this device yet — playing Instagram's embed, which will not autoplay.";
     if (item.kind === "post") return "An Instagram post (image); no video was captured for it.";
     if (/^https:/.test(item.embedUrl || "")) return "No local video — playing Instagram's embed, which will not autoplay.";
@@ -214,6 +215,21 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     const shot = item.screenshot && app.vault.getAbstractFileByPath(item.screenshot);
     const poster = shot ? app.vault.getResourcePath(shot) : item.previewRemote || "";
     const video = item.video && item.video !== "none" && app.vault.getAbstractFileByPath(item.video);
+    if (browse.isGone(item)) {
+      // Instagram refused the download five times: the reel is private or removed.
+      // No embed (it only ends in "watch on Instagram"); a plain card instead.
+      const gone = container.createDiv({ cls: cls + " mlog-detail__media--gone" });
+      gone.createDiv({ cls: "mlog-detail__gone-title", text: "No local copy" });
+      gone.createDiv({ cls: "mlog-detail__gone-sub", text: "Instagram refused the download five times — private, removed, or walled." });
+      if (item.sourceUrl) {
+        const open = gone.createEl("button", { cls: "mod-cta", text: "Open on Instagram" });
+        open.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.open(item.sourceUrl, "_blank");
+        });
+      }
+      return { kind: "none", el: gone };
+    }
     if (video) {
       const attr = { controls: "", preload: "auto", playsinline: "", src: app.vault.getResourcePath(video) };
       if (o.autoplay) attr.autoplay = "";
@@ -228,6 +244,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
             player.muted = true; // the webview refused sound without a gesture — play muted rather than not at all
             const q = player.play();
             if (q && typeof q.catch === "function") q.catch(() => {});
+            if (o.onMuted) o.onMuted(player);
           });
         }
       }
@@ -518,6 +535,19 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
   }
 
+  // A "tap for sound" pill when the webview only allowed muted playback.
+  function unmuteBadge(parent, player) {
+    const b = parent.createEl("button", { cls: "mlog-tv__btn mlog-tv__unmute", text: "Tap for sound" });
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      player.muted = false;
+      const p = player.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+      b.remove();
+    });
+    return b;
+  }
+
   // ---- the player: TV mode and the phone pop-up --------------------------------
   // Mounted on document.body: Obsidian 1.13 applies contain:strict to leaves,
   // which hijacks position:fixed inside a view. "tv" loops the current
@@ -548,6 +578,30 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.adv = null;
       this.keydown = null;
       this.paintWatched = null;
+      this.pre = null; // the next reel, fetched ahead so auto-advance is instant
+    }
+
+    // Preload the next playable item's file into the browser cache.
+    preloadNext() {
+      const len = this.list.length;
+      const ni = browse.nextIndex(this.idx, len, this.loop);
+      const next = ni >= 0 ? this.list[ni] : null;
+      const file = next && next.video && next.video !== "none" && this.app.vault.getAbstractFileByPath(next.video);
+      if (!file) return;
+      if (!this.pre) {
+        this.pre = document.createElement("video");
+        this.pre.preload = "auto";
+        this.pre.muted = true;
+        this.pre.style.cssText = "position:fixed;left:-9999px;top:0;width:10px;height:10px;opacity:0;pointer-events:none;";
+        document.body.appendChild(this.pre);
+      }
+      const src = this.app.vault.getResourcePath(file);
+      if (this.pre.getAttribute("src") !== src) {
+        this.pre.src = src;
+        try {
+          this.pre.load();
+        } catch {}
+      }
     }
 
     open() {
@@ -612,11 +666,16 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         onEnded: () => {
           if (this.auto) this.step(1);
         },
+        onMuted: (player) => {
+          if (this.ctl) unmuteBadge(this.ctl, player);
+        },
       });
       this.paintControls(item, media);
+      this.preloadNext();
       this.watchT = setTimeout(async () => {
-        // 3s dwell marks watched — a mis-tap never counts; the check button unmarks
-        if (item.watched) return;
+        // 3s dwell marks watched — a mis-tap never counts; the check button unmarks.
+        // An embed that only sat there for the dwell was never watched.
+        if (item.watched || media.kind === "embed") return;
         try {
           await this.plugin.updateReviewState(item, "watched", true);
         } catch {}
@@ -653,6 +712,11 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       ctl.createDiv({ cls: "mlog-tv__title", text: `${this.idx + 1} / ${this.list.length} · ${item.title}` });
       const why = whyNoVideo(this.app, item);
       if (why) ctl.createDiv({ cls: "mlog-tv__why", text: why });
+      const cap = ctl.createDiv({ cls: "mlog-tv__caption" });
+      this.view.captionFor(item).then((text) => {
+        if (this.ctl === ctl && text) cap.setText(text);
+        else if (this.ctl === ctl) cap.remove();
+      });
       const btn = (parent, label, icon, onClick, active) => {
         const b = parent.createEl("button", {
           cls: "mlog-tv__btn" + (active ? " mlog-tv__btn--active" : ""),
@@ -765,6 +829,14 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     teardown() {
       this.clearTimers();
       this.stopMedia();
+      if (this.pre) {
+        try {
+          this.pre.removeAttribute("src");
+          this.pre.load();
+        } catch {}
+        this.pre.remove();
+        this.pre = null;
+      }
       if (this.keydown) document.removeEventListener("keydown", this.keydown);
       this.keydown = null;
       if (this.overlay) this.overlay.remove();
@@ -841,7 +913,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
   class SifiLibraryView extends LibraryView {
     constructor(leaf, plugin) {
       super(leaf, plugin);
-      Object.assign(this.filter, { onDay: false, seed: null, tags: [], untagged: false, month: "", sort: "newest" });
+      Object.assign(this.filter, { onDay: false, seed: null, tags: [], untagged: false, month: "", sort: "newest", playable: false });
       this.page = 0;
       this.lastKey = "";
       this.toolsEl = null;
@@ -1019,11 +1091,49 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       if (f.untagged === undefined) f.untagged = false;
       if (f.month === undefined) f.month = "";
       if (!f.sort) f.sort = "newest";
+      if (f.playable === undefined) f.playable = false;
       return f;
     }
 
+    hasFile(it) {
+      return !!(it && it.video && this.app.vault.getAbstractFileByPath(it.video));
+    }
+
     listOpts() {
-      return { todayMMDD: this.todayMMDD, pageSize: this.pageSize() };
+      return { todayMMDD: this.todayMMDD, pageSize: this.pageSize(), hasFile: (it) => this.hasFile(it) };
+    }
+
+    // The note body (caption, hashtags) for one item — cached per file.
+    async captionFor(item) {
+      if (!item || !item.file) return "";
+      const key = item.file.path + ":" + (item.file.stat ? item.file.stat.mtime : 0);
+      if (this.captionCache.has(key)) return this.captionCache.get(key);
+      let text = "";
+      try {
+        text = browse.commentPreview(await this.app.vault.cachedRead(item.file));
+      } catch {}
+      this.captionCache.set(key, text);
+      item.caption = text;
+      return text;
+    }
+
+    // Write each untagged item's caption hashtags into its tags — one tap, durable, the contract's own field.
+    async tagFromCaptions() {
+      const items = this.items || [];
+      await loadCaptions(this.app, items, this.captionCache);
+      const todo = items.map((it) => [it, browse.tagsFromCaption(it)]).filter(([, tags]) => tags.length);
+      let done = 0;
+      for (const [it, tags] of todo) {
+        try {
+          await this.plugin.updateTags(it, tags);
+          it.tags = tags;
+          it.tagsLow = tags.map((t) => t.toLowerCase());
+          done++;
+        } catch {}
+      }
+      new Notice(`Media Log: tagged ${done} item${done === 1 ? "" : "s"} from their captions`);
+      this.paintTags();
+      return done;
     }
 
     // The one visible-list pipeline; upstream's detail nav and the players read it too.
@@ -1031,8 +1141,17 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       return browse.visibleList(this.items || [], this.normalizeFilter(), this.listOpts());
     }
 
-    tvList(mode) {
+    // What the players draw from: the visible list, and by default only what can
+    // actually play on this device (owner: embeds never interrupt a session).
+    playlist() {
       const base = this.filtered();
+      if (this.plugin.settings.playerPlayableOnly === false) return base;
+      const playable = base.filter((it) => browse.isPlayable(it, (x) => this.hasFile(x)));
+      return playable.length ? playable : base;
+    }
+
+    tvList(mode) {
+      const base = this.playlist();
       const unw = base.filter((x) => !x.watched);
       return mode === "unwatched" && unw.length ? unw : base;
     }
@@ -1054,7 +1173,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
 
     openModal(item) {
-      let list = this.filtered();
+      let list = this.playlist();
       let idx = list.findIndex((c) => c.id === item.id);
       if (idx < 0) {
         list = [item];
@@ -1150,9 +1269,16 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           this.renderGrid();
         });
       }
+      const playableN = browse.visibleList(this.items || [], { ...f, playable: false, seed: null }, this.listOpts()).filter((it) => this.hasFile(it)).length;
+      mk(`Playable here · ${playableN}`, !!f.playable, () => {
+        f.playable = !f.playable;
+        this.renderGrid();
+      }, "Only items with a local video on this device");
       if ((this.items || []).length) {
         mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
         mk("TV", false, () => this.openTv(), "TV mode");
+        const untagged = (this.items || []).filter((it) => !(it.tags || []).length).length;
+        if (untagged) mk(`Tag from captions · ${untagged}`, false, () => this.tagFromCaptions(), "Write each untagged item's caption hashtags as its tags");
       }
       mk("Refresh", false, () => this.refreshItems(), "Re-read the items folder");
       mk("Guide", false, () => this.app.workspace.openLinkText(String(this.plugin.settings.guideNote || SIFI_DEFAULTS.guideNote), "", false), "Open the Media guide");
@@ -1274,12 +1400,14 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         cls: selected ? "mlog-card mlog-card--selected" : "mlog-card",
         attr: { role: "button", tabindex: "0", "data-id": item.id },
       });
+      const gone = browse.isGone(item);
+      if (gone) card.classList.add("mlog-card--gone");
       const thumb = card.createDiv({ cls: "mlog-card__thumb" });
-      thumb.createDiv({ cls: "mlog-card__placeholder", text: item.kind && item.kind !== "link" ? item.kind : item.platform });
-      const src = thumbSrc(this.app, item);
+      thumb.createDiv({ cls: "mlog-card__placeholder", text: gone ? "No copy" : item.kind && item.kind !== "link" ? item.kind : item.platform });
+      const src = gone ? "" : thumbSrc(this.app, item);
       if (src) this.thumbs.bind(thumb, src, isPhone());
       if (item.starred) thumb.createSpan({ cls: "mlog-card__star", text: "★", attr: { "aria-label": "Starred" } });
-      if (!item.watched) thumb.createSpan({ cls: "mlog-card__unwatched", text: "New" });
+      if (!item.watched && !gone) thumb.createSpan({ cls: "mlog-card__unwatched", text: "New" });
       const body = card.createDiv({ cls: "mlog-card__body" });
       body.createDiv({ cls: "mlog-card__title", text: item.title });
       const metaRow = body.createDiv({ cls: "mlog-card__meta" });
@@ -1326,6 +1454,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       buildMedia(this.app, container, item, {
         autoplay: true,
         loop: !this.autoAdvance,
+        onMuted: (player) => unmuteBadge(container, player),
         onEnded: () => {
           if (!this.autoAdvance || this.tv) return;
           const visible = this.filtered();
@@ -1335,6 +1464,11 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       });
       const why = whyNoVideo(this.app, item);
       if (why) container.createDiv({ cls: "mlog-detail__why", text: why });
+      const cap = container.createDiv({ cls: "mlog-detail__caption" });
+      this.captionFor(item).then((text) => {
+        if (this.selected && this.selected.id === item.id && text) cap.setText(text);
+        else cap.remove();
+      });
     }
 
     renderError(err) {
@@ -1397,6 +1531,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         .addToggle((t) =>
           t.setValue(s.autoAdvance !== false).onChange(async (v) => {
             s.autoAdvance = v;
+            await this.plugin.saveSettings();
+          })
+        );
+      new Setting(c)
+        .setName("Players use only what plays here")
+        .setDesc("TV mode and the pop-up draw only from items with a local video on this device; embeds and gone reels are skipped.")
+        .addToggle((t) =>
+          t.setValue(s.playerPlayableOnly !== false).onChange(async (v) => {
+            s.playerPlayableOnly = v;
             await this.plugin.saveSettings();
           })
         );

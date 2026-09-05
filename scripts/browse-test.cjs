@@ -369,6 +369,43 @@ test("posterPath / posterCandidates: local video without a usable screenshot", (
   assert.deepEqual(b.posterCandidates(items, hasVideo, hasShot).map((i) => i.id), ["v", "g"]);
 });
 
+test("isGone / isPlayable: the none sentinel, and a file that exists here", () => {
+  const hasFile = (it) => it.video === "Media Log/Assets/Video/here.mp4";
+  assert.equal(b.isGone({ video: "none" }), true);
+  assert.equal(b.isGone({ video: "NONE" }), true);
+  assert.equal(b.isGone({ video: "Media Log/Assets/Video/here.mp4" }), false);
+  assert.equal(b.isGone({}), false);
+  assert.equal(b.isPlayable({ video: "Media Log/Assets/Video/here.mp4" }, hasFile), true, "file present here");
+  assert.equal(b.isPlayable({ video: "Media Log/Assets/Video/mac-only.mp4" }, hasFile), false, "file only on another device");
+  assert.equal(b.isPlayable({ video: "none" }, hasFile), false);
+  assert.equal(b.isPlayable({ embedUrl: "https://x/embed" }, hasFile), false, "an embed is not playable here");
+});
+
+test("hashtagsOf / tagsFromCaption: clean, lower-case, deduped, capped, only for untagged items", () => {
+  assert.deepEqual(b.hashtagsOf("Frug #lakepowell #fyp #frog"), ["lakepowell", "fyp", "frog"]);
+  assert.deepEqual(b.hashtagsOf("#Bench #bench day #squat"), ["bench", "squat"], "case-insensitive dedupe");
+  assert.deepEqual(b.hashtagsOf("email me at a#b.com and #real_tag"), ["real_tag"], "a # inside a word is not a tag");
+  assert.deepEqual(b.hashtagsOf("#x #1 #ok"), ["ok"], "single characters skipped");
+  assert.equal(b.hashtagsOf("#a1 #a2 #a3 #a4 #a5 #a6 #a7 #a8 #a9 #a10").length, 8, "capped at eight");
+  assert.deepEqual(b.hashtagsOf(""), []);
+  assert.deepEqual(b.tagsFromCaption({ tags: [], caption: "run #legday #gym" }), ["legday", "gym"]);
+  assert.deepEqual(b.tagsFromCaption({ tags: ["mine"], caption: "#legday" }), [], "never touches an item that already has tags");
+  assert.deepEqual(b.tagsFromCaption(null), []);
+});
+
+test("visibleList: playable-here filter and unwatched excluding gone reels", () => {
+  const items = [
+    { id: "p", platform: "Instagram", tags: [], watched: false, dkey: "2026-09-01", video: "Media Log/Assets/Video/p.mp4" },
+    { id: "m", platform: "Instagram", tags: [], watched: false, dkey: "2026-09-01", video: "Media Log/Assets/Video/mac.mp4" },
+    { id: "g", platform: "Instagram", tags: [], watched: false, dkey: "2026-09-01", video: "none" },
+    { id: "e", platform: "Instagram", tags: [], watched: false, dkey: "2026-09-01", embedUrl: "https://x/embed" },
+  ];
+  const hasFile = (it) => it.video === "Media Log/Assets/Video/p.mp4";
+  assert.deepEqual(b.visibleList(items, { playable: true }, { hasFile }).map((i) => i.id), ["p"]);
+  assert.equal(b.visibleList(items, { playable: true }, {}).length, 4, "without a hasFile answer the filter is inert");
+  assert.deepEqual(b.visibleList(items, { review: "unwatched" }, {}).map((i) => i.id), ["p", "m", "e"], "gone reels are not 'unwatched'");
+});
+
 test("enrichItem: remote preview, kind, dkey, tagsLow, caption slot", () => {
   const item = { id: "ml-20260707-160000-instagram-instagram-reel-x", sourceUrl: "https://www.instagram.com/reel/X/", capturedAt: "", tags: ["Bench"] };
   b.enrichItem(item, { preview_remote: "https://cdn.example.com/t.jpg", kind: "reel" });

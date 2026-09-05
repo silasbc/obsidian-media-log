@@ -152,3 +152,14 @@
 .mlog--barred { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
 .mlog-detail__why { font-size: 0.72rem; color: var(--text-muted); margin: 0.3rem 0 0.5rem; }
 .mlog-tv__why { font-size: 0.72rem; color: #aeaeb2; }
+/* 1.4.0-sifi.6: gone reels, captions, sound badge */
+.mlog-card--gone { opacity: 0.55; }
+.mlog-card--gone .mlog-card__placeholder { font-size: 0.7rem; letter-spacing: 0.02em; text-transform: none; }
+.mlog-detail__media--gone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.3rem; color: var(--text-muted); background: var(--background-secondary); }
+.mlog-detail__gone-title { font-weight: 600; color: var(--text-normal); }
+.mlog-detail__gone-sub { font-size: 0.78rem; }
+.mlog-detail__caption { font-size: 0.82rem; line-height: 1.4; margin: 0.4rem 0 0.2rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mlog-detail__caption:empty { display: none; }
+.mlog-tv__caption { font-size: 0.78rem; line-height: 1.35; color: #d0d0d5; max-height: 3.4em; overflow: hidden; overflow-wrap: anywhere; }
+.mlog-tv__caption:empty { display: none; }
+.mlog-tv__unmute { background: #0a84ff; color: #fff; margin: 0.3rem 0; }
