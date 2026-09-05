@@ -367,6 +367,65 @@ var require_browse = __commonJS({
       const exp = entry.expires || (entry.fetched || 0) + (defaultMs == null ? 6 * 60 * 60 * 1e3 : defaultMs);
       return exp - margin > nowMs;
     }
+    var IG_CAPTURE_RE = /instagram\.com\/(?:[^/?#]+\/)?(reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i;
+    function igCaptureMatch(url) {
+      const m = IG_CAPTURE_RE.exec(safeStr(url));
+      if (!m) return null;
+      const raw = m[1].toLowerCase();
+      const seg = raw === "reels" ? "reel" : raw;
+      const kind = seg === "p" ? "post" : seg === "tv" ? "video" : "reel";
+      return { seg, code: m[2], kind };
+    }
+    function youtubeIdOf(url) {
+      let u;
+      try {
+        u = new URL(safeStr(url));
+      } catch {
+        return "";
+      }
+      const host = u.hostname.replace(/^www\./i, "");
+      if (host === "youtu.be") return u.pathname.slice(1).split("/")[0] || "";
+      if (host === "youtube.com" || host.endsWith(".youtube.com")) {
+        const v = u.searchParams.get("v");
+        if (v) return v;
+        const m = /^\/embed\/([^/?]+)/.exec(u.pathname);
+        if (m) return m[1];
+      }
+      return "";
+    }
+    function captureKindOf(url) {
+      const ig = igCaptureMatch(url);
+      return ig ? ig.kind : "";
+    }
+    function captureEmbedUrl(url) {
+      const ig = igCaptureMatch(url);
+      if (ig) return `https://www.instagram.com/${ig.seg}/${ig.code}/embed/captioned/`;
+      const yid = youtubeIdOf(url);
+      return yid ? `https://www.youtube.com/embed/${yid}` : "";
+    }
+    function isInstagramLoginWall(title) {
+      const t = safeStr(title);
+      if (!t) return true;
+      if (/^instagram$/i.test(t)) return true;
+      if (/\blog ?in\b/i.test(t) && /instagram/i.test(t)) return true;
+      if (/^just a moment/i.test(t)) return true;
+      return false;
+    }
+    function captureFallbackTitle(url, title) {
+      const ig = igCaptureMatch(url);
+      if (!ig) return safeStr(title);
+      const t = safeStr(title);
+      if (t && t !== safeStr(url) && !isInstagramLoginWall(t)) return t;
+      const label = { reel: "Reel", post: "Post", video: "Video" }[ig.kind];
+      return `Instagram ${label} ${ig.code}`;
+    }
+    function captureEnrich(url, title) {
+      return {
+        kind: captureKindOf(url),
+        embedUrl: captureEmbedUrl(url),
+        title: captureFallbackTitle(url, title) || safeStr(title)
+      };
+    }
     function hashtagsOf(text) {
       const out = [];
       const seen = /* @__PURE__ */ new Set();
@@ -483,7 +542,14 @@ var require_browse = __commonJS({
       baseFilter,
       visibleList,
       platformCounts,
-      enrichItem
+      enrichItem,
+      igCaptureMatch,
+      youtubeIdOf,
+      captureKindOf,
+      captureEmbedUrl,
+      isInstagramLoginWall,
+      captureFallbackTitle,
+      captureEnrich
     };
   }
 });
@@ -2198,6 +2264,8 @@ module.exports = class MediaLogPlugin extends Plugin {
   async createItem({ url, title, creator, tags, description, imageUrl }) {
     const stamp = nowStamp();
     const platform = detectPlatform(url);
+    const enrich = browse.captureEnrich(url, title);
+    title = enrich.title;
     const mediaId = `ml-${stamp.id}-${slugify(platform)}-${slugify(title || url, 24)}`;
     let screenshot = "";
     if (imageUrl && this.settings.downloadImages) {
@@ -2227,8 +2295,12 @@ module.exports = class MediaLogPlugin extends Plugin {
       `creator: "${yamlEscape(creator)}"`,
       `title: "${yamlEscape(title || url)}"`,
       `screenshot: "${yamlEscape(screenshot)}"`,
+      ...enrich.embedUrl ? [`embed_url: "${yamlEscape(enrich.embedUrl)}"`] : [],
+      // [sifi]
       "tags: [" + (tags || []).map((t) => `"${yamlEscape(t)}"`).join(", ") + "]",
       "status: captured",
+      ...enrich.kind ? [`kind: "${yamlEscape(enrich.kind)}"`] : [],
+      // [sifi]
       "---",
       "",
       `# ${title || url}`,

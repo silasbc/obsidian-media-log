@@ -196,6 +196,8 @@ module.exports = class MediaLogPlugin extends Plugin {
   async createItem({ url, title, creator, tags, description, imageUrl }) {
     const stamp = nowStamp();
     const platform = detectPlatform(url);
+    const enrich = browse.captureEnrich(url, title); // [sifi] kind/embed_url/title fallback — see FORK.md
+    title = enrich.title;
     const mediaId = `ml-${stamp.id}-${slugify(platform)}-${slugify(title || url, 24)}`;
 
     let screenshot = "";
@@ -227,8 +229,10 @@ module.exports = class MediaLogPlugin extends Plugin {
       `creator: "${yamlEscape(creator)}"`,
       `title: "${yamlEscape(title || url)}"`,
       `screenshot: "${yamlEscape(screenshot)}"`,
+      ...(enrich.embedUrl ? [`embed_url: "${yamlEscape(enrich.embedUrl)}"`] : []), // [sifi]
       "tags: [" + (tags || []).map((t) => `"${yamlEscape(t)}"`).join(", ") + "]",
       "status: captured",
+      ...(enrich.kind ? [`kind: "${yamlEscape(enrich.kind)}"`] : []), // [sifi]
       "---",
       "",
       `# ${title || url}`,

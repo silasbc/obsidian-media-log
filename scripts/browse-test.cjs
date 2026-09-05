@@ -481,3 +481,72 @@ test("isPlayable with streaming: the local file wins, a streamable reel counts, 
   assert.deepEqual(b.visibleList([local, unsynced, refused, post].map((it, i) => ({ ...it, id: String(i), tags: [] })), { playable: true }, { hasFile: (it) => it.video === local.video, canStream: true }).map((i) => i.id), ["0", "1", "2"]);
   assert.equal(b.visibleList([local, unsynced].map((it, i) => ({ ...it, id: String(i), tags: [] })), { playable: true }, { canStream: true }).length, 2, "streaming alone answers the filter");
 });
+
+// ---- capture-time enrichment (mirrors runner/lib/medialog.js) --------------
+test("igCaptureMatch: reel/p/tv, reels normalized, a leading username segment, and a miss", () => {
+  assert.deepEqual(b.igCaptureMatch("https://www.instagram.com/reel/ABC123/"), { seg: "reel", code: "ABC123", kind: "reel" });
+  assert.deepEqual(b.igCaptureMatch("https://www.instagram.com/p/XyZ_9-8/?igsh=1"), { seg: "p", code: "XyZ_9-8", kind: "post" });
+  assert.deepEqual(b.igCaptureMatch("https://www.instagram.com/tv/Q1w-e_r/"), { seg: "tv", code: "Q1w-e_r", kind: "video" });
+  assert.deepEqual(b.igCaptureMatch("https://www.instagram.com/reels/D_e-f/"), { seg: "reel", code: "D_e-f", kind: "reel" });
+  assert.deepEqual(b.igCaptureMatch("https://www.instagram.com/someone/reel/ABC/"), { seg: "reel", code: "ABC", kind: "reel" });
+  assert.equal(b.igCaptureMatch("https://www.youtube.com/watch?v=1"), null);
+  assert.equal(b.igCaptureMatch(""), null);
+});
+
+test("youtubeIdOf: watch, short link, existing embed, and misses", () => {
+  assert.equal(b.youtubeIdOf("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(b.youtubeIdOf("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(b.youtubeIdOf("https://youtu.be/dQw4w9WgXcQ?t=5"), "dQw4w9WgXcQ");
+  assert.equal(b.youtubeIdOf("https://www.youtube.com/embed/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(b.youtubeIdOf("https://m.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(b.youtubeIdOf("https://www.youtube.com/"), "");
+  assert.equal(b.youtubeIdOf("https://example.com/watch?v=1"), "");
+  assert.equal(b.youtubeIdOf("not a url"), "");
+});
+
+test("captureKindOf / captureEmbedUrl: instagram reel/post/tv and YouTube; everything else is unset", () => {
+  assert.equal(b.captureKindOf("https://www.instagram.com/reel/ABC/"), "reel");
+  assert.equal(b.captureKindOf("https://www.instagram.com/p/ABC/"), "post");
+  assert.equal(b.captureKindOf("https://www.instagram.com/tv/ABC/"), "video");
+  assert.equal(b.captureKindOf("https://www.youtube.com/watch?v=1"), "");
+  assert.equal(b.captureKindOf("https://example.com/"), "");
+
+  assert.equal(b.captureEmbedUrl("https://www.instagram.com/reel/ABC123/?igsh=1"), "https://www.instagram.com/reel/ABC123/embed/captioned/");
+  assert.equal(b.captureEmbedUrl("https://www.instagram.com/p/XyZ9/"), "https://www.instagram.com/p/XyZ9/embed/captioned/");
+  assert.equal(b.captureEmbedUrl("https://www.instagram.com/tv/Q1w2/"), "https://www.instagram.com/tv/Q1w2/embed/captioned/");
+  assert.equal(b.captureEmbedUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "https://www.youtube.com/embed/dQw4w9WgXcQ");
+  assert.equal(b.captureEmbedUrl("https://youtu.be/dQw4w9WgXcQ"), "https://www.youtube.com/embed/dQw4w9WgXcQ");
+  assert.equal(b.captureEmbedUrl("https://example.com/watch?v=1"), "");
+  assert.equal(b.captureEmbedUrl("https://www.tiktok.com/@x/video/1"), "");
+});
+
+test("isInstagramLoginWall / captureFallbackTitle: empty, login-wall, and url-echo titles fall back; a real title and non-Instagram urls pass through", () => {
+  assert.equal(b.isInstagramLoginWall(""), true);
+  assert.equal(b.isInstagramLoginWall("Instagram"), true);
+  assert.equal(b.isInstagramLoginWall("Login • Instagram"), true);
+  assert.equal(b.isInstagramLoginWall("Log in • Instagram"), true);
+  assert.equal(b.isInstagramLoginWall("Just a moment..."), true);
+  assert.equal(b.isInstagramLoginWall("A real reel title"), false);
+
+  const reelUrl = "https://www.instagram.com/reel/ABC123/";
+  assert.equal(b.captureFallbackTitle(reelUrl, ""), "Instagram Reel ABC123");
+  assert.equal(b.captureFallbackTitle(reelUrl, "Log in • Instagram"), "Instagram Reel ABC123");
+  assert.equal(b.captureFallbackTitle(reelUrl, "Just a moment..."), "Instagram Reel ABC123");
+  assert.equal(b.captureFallbackTitle(reelUrl, reelUrl), "Instagram Reel ABC123", "the modal's own url-as-title fallback also counts as unusable");
+  assert.equal(b.captureFallbackTitle(reelUrl, "A great workout tip"), "A great workout tip");
+  assert.equal(b.captureFallbackTitle("https://www.instagram.com/p/XyZ9/", ""), "Instagram Post XyZ9");
+  assert.equal(b.captureFallbackTitle("https://www.instagram.com/tv/Q1w2/", ""), "Instagram Video Q1w2");
+  assert.equal(b.captureFallbackTitle("https://www.youtube.com/watch?v=1", ""), "", "non-Instagram urls pass the title through unchanged");
+  assert.equal(b.captureFallbackTitle("https://www.youtube.com/watch?v=1", "How to sharpen a chisel"), "How to sharpen a chisel");
+});
+
+test("captureEnrich: one call bundles kind, embed_url, and the resolved title", () => {
+  const reel = b.captureEnrich("https://www.instagram.com/reel/ABC123/", "Login • Instagram");
+  assert.deepEqual(reel, { kind: "reel", embedUrl: "https://www.instagram.com/reel/ABC123/embed/captioned/", title: "Instagram Reel ABC123" });
+
+  const yt = b.captureEnrich("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Never Gonna Give You Up");
+  assert.deepEqual(yt, { kind: "", embedUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", title: "Never Gonna Give You Up" });
+
+  const web = b.captureEnrich("https://example.com/article", "An article");
+  assert.deepEqual(web, { kind: "", embedUrl: "", title: "An article" });
+});

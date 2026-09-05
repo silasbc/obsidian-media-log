@@ -492,6 +492,104 @@ function streamFresh(entry, nowMs, marginMs, defaultMs) {
   return exp - margin > nowMs;
 }
 
+// ---- capture-time enrichment (mirrors runner/lib/medialog.js) --------------
+// Upstream's Add-item flow (main.js createItem) writes only title, screenshot,
+// and tags — a plugin-captured Instagram/YouTube link lands with whatever an
+// anonymous fetch produced (often a login-wall title, never a kind or
+// embed_url). These mirror the runner's lib/medialog.js (buildEmbedUrl,
+// instagramCode, youtubeId) and jobs/media-capture.js (the login-wall
+// fallback title) so a plugin-written note and a runner-written note carry
+// the same shape for the same source_url. Item contract unchanged — both
+// fields stay optional.
+
+// Instagram share-link parsing: an optional leading segment (e.g. a
+// username, instagram.com/<user>/reel/<code>), then reel/reels/p/tv, then
+// the code. `seg` is the URL's own path word (reel/p/tv — "reels" normalized
+// to "reel") — what the embed URL needs; `kind` is the runner's reel/post/
+// video label — what the frontmatter's `kind` field needs.
+const IG_CAPTURE_RE = /instagram\.com\/(?:[^/?#]+\/)?(reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i;
+
+function igCaptureMatch(url) {
+  const m = IG_CAPTURE_RE.exec(safeStr(url));
+  if (!m) return null;
+  const raw = m[1].toLowerCase();
+  const seg = raw === "reels" ? "reel" : raw;
+  const kind = seg === "p" ? "post" : seg === "tv" ? "video" : "reel";
+  return { seg, code: m[2], kind };
+}
+
+// The runner's youtubeId, ported: a bare id from a watch link, a youtu.be
+// short link, or an existing /embed/ link. "" when the url isn't YouTube or
+// carries no id.
+function youtubeIdOf(url) {
+  let u;
+  try {
+    u = new URL(safeStr(url));
+  } catch {
+    return "";
+  }
+  const host = u.hostname.replace(/^www\./i, "");
+  if (host === "youtu.be") return u.pathname.slice(1).split("/")[0] || "";
+  if (host === "youtube.com" || host.endsWith(".youtube.com")) {
+    const v = u.searchParams.get("v");
+    if (v) return v;
+    const m = /^\/embed\/([^/?]+)/.exec(u.pathname);
+    if (m) return m[1];
+  }
+  return "";
+}
+
+// kind for a fresh capture, from the URL alone: reel/post/video for
+// Instagram, "" otherwise (YouTube and everything else has no kind yet).
+function captureKindOf(url) {
+  const ig = igCaptureMatch(url);
+  return ig ? ig.kind : "";
+}
+
+// embed_url for a fresh capture: Instagram reel/post/tv → the captioned
+// embed page at the same path word as the source; YouTube → /embed/<id>.
+// "" when neither matches.
+function captureEmbedUrl(url) {
+  const ig = igCaptureMatch(url);
+  if (ig) return `https://www.instagram.com/${ig.seg}/${ig.code}/embed/captioned/`;
+  const yid = youtubeIdOf(url);
+  return yid ? `https://www.youtube.com/embed/${yid}` : "";
+}
+
+// Login-wall / interstitial titles Instagram serves an anonymous fetch —
+// the shapes the runner's media-capture handler treats as unusable.
+function isInstagramLoginWall(title) {
+  const t = safeStr(title);
+  if (!t) return true;
+  if (/^instagram$/i.test(t)) return true;
+  if (/\blog ?in\b/i.test(t) && /instagram/i.test(t)) return true;
+  if (/^just a moment/i.test(t)) return true;
+  return false;
+}
+
+// The runner's fallback title for a fresh Instagram capture — "Instagram
+// Reel <code>" / "Instagram Post <code>" / "Instagram Video <code>" — used
+// when the fetched title is empty, a login wall, or (nothing else fetched)
+// literally the url itself. Non-Instagram urls pass `title` through as-is.
+function captureFallbackTitle(url, title) {
+  const ig = igCaptureMatch(url);
+  if (!ig) return safeStr(title);
+  const t = safeStr(title);
+  if (t && t !== safeStr(url) && !isInstagramLoginWall(t)) return t;
+  const label = { reel: "Reel", post: "Post", video: "Video" }[ig.kind];
+  return `Instagram ${label} ${ig.code}`;
+}
+
+// One call for the Add-item flow: kind, embed_url, and the resolved title,
+// from the url and whatever title the fetch (or the operator) produced.
+function captureEnrich(url, title) {
+  return {
+    kind: captureKindOf(url),
+    embedUrl: captureEmbedUrl(url),
+    title: captureFallbackTitle(url, title) || safeStr(title),
+  };
+}
+
 // Hashtags in a caption → clean, lower-case, deduped tag list (max 8).
 function hashtagsOf(text) {
   const out = [];
@@ -628,4 +726,11 @@ module.exports = {
   visibleList,
   platformCounts,
   enrichItem,
+  igCaptureMatch,
+  youtubeIdOf,
+  captureKindOf,
+  captureEmbedUrl,
+  isInstagramLoginWall,
+  captureFallbackTitle,
+  captureEnrich,
 };
