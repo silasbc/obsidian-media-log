@@ -45,7 +45,8 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 - Players draw only from what plays on this device (setting, default on); a "Playable here" chip filters the grid the same way.
 - Reels Instagram refused (`video: none`) show as "No local copy" with an Open on Instagram button — no embed, no New badge, not counted as unwatched.
-- Captions (the note body) under the media in the pane and the players; "Tag from captions" writes each untagged item's hashtags as its tags.
+- Captions (the note body) under the media in the pane and the players. (A "Tag from captions" button shipped and was withdrawn the same hour: the owner wants his own categories, not hashtags. The 218 auto-written tag lists were reverted.)
+- The tag row shows the 24 busiest tags (selected ones always) with a More/Fewer toggle.
 - The next reel is fetched ahead so auto-advance is instant; an embed sitting through the dwell is not marked watched; a "Tap for sound" pill appears when the webview only allowed muted playback.
 
 ### 1.4.0-sifi.5 — 2026-09-05

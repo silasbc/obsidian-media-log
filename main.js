@@ -453,6 +453,7 @@ var require_sifi = __commonJS({
     var TICK_MS = 500;
     var CONTROLS_FADE_MS = 2500;
     var REFRESH_DEBOUNCE_MS = 900;
+    var TAG_CHIP_LIMIT = 24;
     var POSTER_MAX_WIDTH = 540;
     var POSTER_TIMEOUT_MS = 12e3;
     var BOTTOM_BAR_TABS = [
@@ -1247,6 +1248,7 @@ var require_sifi = __commonJS({
           this.captionCache = /* @__PURE__ */ new Map();
           this.captionsLoaded = false;
           this.captionsLoading = null;
+          this.tagsExpanded = false;
           this.refreshT = null;
           this.bar = new BottomBar(this);
           this.todayMMDD = browse2.todayMMDD(/* @__PURE__ */ new Date());
@@ -1422,25 +1424,6 @@ var require_sifi = __commonJS({
           item.caption = text;
           return text;
         }
-        // Write each untagged item's caption hashtags into its tags — one tap, durable, the contract's own field.
-        async tagFromCaptions() {
-          const items = this.items || [];
-          await loadCaptions(this.app, items, this.captionCache);
-          const todo = items.map((it) => [it, browse2.tagsFromCaption(it)]).filter(([, tags]) => tags.length);
-          let done = 0;
-          for (const [it, tags] of todo) {
-            try {
-              await this.plugin.updateTags(it, tags);
-              it.tags = tags;
-              it.tagsLow = tags.map((t) => t.toLowerCase());
-              done++;
-            } catch {
-            }
-          }
-          new Notice2(`Media Log: tagged ${done} item${done === 1 ? "" : "s"} from their captions`);
-          this.paintTags();
-          return done;
-        }
         // The one visible-list pipeline; upstream's detail nav and the players read it too.
         filtered() {
           return browse2.visibleList(this.items || [], this.normalizeFilter(), this.listOpts());
@@ -1570,8 +1553,6 @@ var require_sifi = __commonJS({
           if ((this.items || []).length) {
             mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
             mk("TV", false, () => this.openTv(), "TV mode");
-            const untagged = (this.items || []).filter((it) => !(it.tags || []).length).length;
-            if (untagged) mk(`Tag from captions \xB7 ${untagged}`, false, () => this.tagFromCaptions(), "Write each untagged item's caption hashtags as its tags");
           }
           mk("Refresh", false, () => this.refreshItems(), "Re-read the items folder");
           mk("Guide", false, () => this.app.workspace.openLinkText(String(this.plugin.settings.guideNote || SIFI_DEFAULTS.guideNote), "", false), "Open the Media guide");
@@ -1593,12 +1574,19 @@ var require_sifi = __commonJS({
             b.addEventListener("click", onClick);
             return b;
           };
-          for (const u of uni) {
+          const shown = this.tagsExpanded ? uni : uni.filter((u, i) => i < TAG_CHIP_LIMIT || f.tags.includes(u.key));
+          for (const u of shown) {
             const on = f.tags.includes(u.key);
             chip(`${u.label} \xB7 ${u.n}`, on, () => {
               f.tags = on ? f.tags.filter((k) => k !== u.key) : f.tags.concat([u.key]);
               f.untagged = false;
               this.renderGrid();
+            });
+          }
+          if (uni.length > TAG_CHIP_LIMIT) {
+            chip(this.tagsExpanded ? "Fewer tags" : `+${uni.length - shown.length} more`, false, () => {
+              this.tagsExpanded = !this.tagsExpanded;
+              this.paintTags();
             });
           }
           const un = browse2.untaggedCount(items);

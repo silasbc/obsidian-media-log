@@ -39,6 +39,7 @@ const WATCH_DWELL_MS = 3000;
 const TICK_MS = 500;
 const CONTROLS_FADE_MS = 2500;
 const REFRESH_DEBOUNCE_MS = 900;
+const TAG_CHIP_LIMIT = 24; // the busiest tags first; the rest behind a More toggle
 const POSTER_MAX_WIDTH = 540;
 const POSTER_TIMEOUT_MS = 12000;
 
@@ -925,6 +926,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.captionCache = new Map();
       this.captionsLoaded = false;
       this.captionsLoading = null;
+      this.tagsExpanded = false;
       this.refreshT = null;
       this.bar = new BottomBar(this);
       this.todayMMDD = browse.todayMMDD(new Date());
@@ -1117,25 +1119,6 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       return text;
     }
 
-    // Write each untagged item's caption hashtags into its tags — one tap, durable, the contract's own field.
-    async tagFromCaptions() {
-      const items = this.items || [];
-      await loadCaptions(this.app, items, this.captionCache);
-      const todo = items.map((it) => [it, browse.tagsFromCaption(it)]).filter(([, tags]) => tags.length);
-      let done = 0;
-      for (const [it, tags] of todo) {
-        try {
-          await this.plugin.updateTags(it, tags);
-          it.tags = tags;
-          it.tagsLow = tags.map((t) => t.toLowerCase());
-          done++;
-        } catch {}
-      }
-      new Notice(`Media Log: tagged ${done} item${done === 1 ? "" : "s"} from their captions`);
-      this.paintTags();
-      return done;
-    }
-
     // The one visible-list pipeline; upstream's detail nav and the players read it too.
     filtered() {
       return browse.visibleList(this.items || [], this.normalizeFilter(), this.listOpts());
@@ -1277,8 +1260,6 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       if ((this.items || []).length) {
         mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
         mk("TV", false, () => this.openTv(), "TV mode");
-        const untagged = (this.items || []).filter((it) => !(it.tags || []).length).length;
-        if (untagged) mk(`Tag from captions · ${untagged}`, false, () => this.tagFromCaptions(), "Write each untagged item's caption hashtags as its tags");
       }
       mk("Refresh", false, () => this.refreshItems(), "Re-read the items folder");
       mk("Guide", false, () => this.app.workspace.openLinkText(String(this.plugin.settings.guideNote || SIFI_DEFAULTS.guideNote), "", false), "Open the Media guide");
@@ -1301,12 +1282,20 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         b.addEventListener("click", onClick);
         return b;
       };
-      for (const u of uni) {
+      // Selected tags always show; otherwise the busiest TAG_CHIP_LIMIT, with More/Fewer.
+      const shown = this.tagsExpanded ? uni : uni.filter((u, i) => i < TAG_CHIP_LIMIT || f.tags.includes(u.key));
+      for (const u of shown) {
         const on = f.tags.includes(u.key);
         chip(`${u.label} · ${u.n}`, on, () => {
           f.tags = on ? f.tags.filter((k) => k !== u.key) : f.tags.concat([u.key]);
           f.untagged = false;
           this.renderGrid();
+        });
+      }
+      if (uni.length > TAG_CHIP_LIMIT) {
+        chip(this.tagsExpanded ? "Fewer tags" : `+${uni.length - shown.length} more`, false, () => {
+          this.tagsExpanded = !this.tagsExpanded;
+          this.paintTags();
         });
       }
       const un = browse.untaggedCount(items);
