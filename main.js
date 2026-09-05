@@ -629,6 +629,7 @@ var require_sifi = __commonJS({
           }
           this.idx = idx;
           this.panel.empty();
+          this.panel.classList.toggle("mlog-tv__panel--wide", !browse2.isPortrait(item));
           const media = buildMedia(this.app, this.panel, item, { autoplay: true, loop: false, onEnded: () => this.step(1) });
           this.paintControls(item, media);
           this.watchT = setTimeout(async () => {

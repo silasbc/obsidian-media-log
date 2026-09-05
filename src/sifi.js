@@ -397,6 +397,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       }
       this.idx = idx;
       this.panel.empty();
+      this.panel.classList.toggle("mlog-tv__panel--wide", !browse.isPortrait(item)); // the panel takes the item's shape
       const media = buildMedia(this.app, this.panel, item, { autoplay: true, loop: false, onEnded: () => this.step(1) });
       this.paintControls(item, media);
       this.watchT = setTimeout(async () => {
