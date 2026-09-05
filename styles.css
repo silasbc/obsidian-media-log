@@ -150,3 +150,5 @@
 .mlog-bar__icon, .mlog-bar__icon svg { width: 20px; height: 20px; }
 .mlog-bar__label { font-size: 10px; font-weight: 500; white-space: nowrap; }
 .mlog--barred { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+.mlog-detail__why { font-size: 0.72rem; color: var(--text-muted); margin: 0.3rem 0 0.5rem; }
+.mlog-tv__why { font-size: 0.72rem; color: #aeaeb2; }

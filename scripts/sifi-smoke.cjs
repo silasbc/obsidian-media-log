@@ -112,6 +112,7 @@ const app = {
   assert.equal(plugin.settings.guideNote, "Select/Guide/Media");
   assert.equal(plugin.settings.posterFrames, true);
   assert.equal(plugin.settings.bottomBar, true);
+  assert.equal(plugin.settings.autoAdvance, true, "auto-advance is a remembered setting, on by default");
   assert.equal(MediaLogPlugin.sifi.BOTTOM_BAR_TABS.map((t) => t.label).join(","), "Home,Train,Health,Media,Mauston", "bottom bar mirrors tab bar v6");
 
   const items = await plugin.listItems();

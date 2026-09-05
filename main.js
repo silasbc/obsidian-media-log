@@ -414,7 +414,9 @@ var require_sifi = __commonJS({
       quarantineLog: "Media Log/Deleted Media.md",
       guideNote: "Select/Guide/Media",
       posterFrames: true,
-      bottomBar: true
+      bottomBar: true,
+      autoAdvance: true
+      // owner ask 2026-09-05: a visible, remembered toggle
     };
     var THUMB_LIVE_MAX = 24;
     var WATCH_DWELL_MS = 3e3;
@@ -551,6 +553,15 @@ var require_sifi = __commonJS({
             cache.set(key, it.caption);
           })
         );
+      }
+      function whyNoVideo(app, item) {
+        const v = String(item.video || "");
+        if (v && v !== "none" && app.vault.getAbstractFileByPath(v)) return "";
+        if (v === "none") return "Instagram refused this download five times \u2014 playing Instagram's embed, which will not autoplay.";
+        if (v) return "The video file has not synced to this device yet \u2014 playing Instagram's embed, which will not autoplay.";
+        if (item.kind === "post") return "An Instagram post (image); no video was captured for it.";
+        if (/^https:/.test(item.embedUrl || "")) return "No local video \u2014 playing Instagram's embed, which will not autoplay.";
+        return "";
       }
       function buildMedia(app, container, item, opts) {
         const o = opts || {};
@@ -956,6 +967,8 @@ var require_sifi = __commonJS({
           const ctl = this.ctl;
           ctl.empty();
           ctl.createDiv({ cls: "mlog-tv__title", text: `${this.idx + 1} / ${this.list.length} \xB7 ${item.title}` });
+          const why = whyNoVideo(this.app, item);
+          if (why) ctl.createDiv({ cls: "mlog-tv__why", text: why });
           const btn = (parent, label, icon, onClick, active) => {
             const b = parent.createEl("button", {
               cls: "mlog-tv__btn" + (active ? " mlog-tv__btn--active" : ""),
@@ -975,17 +988,18 @@ var require_sifi = __commonJS({
           const pp = btn(
             row1,
             "Auto-advance",
-            this.auto ? "pause" : "play",
+            null,
             () => {
               this.auto = !this.auto;
-              if (this.modal) this.view.autoAdvance = this.auto;
+              if (this.modal) this.view.setAutoAdvance(this.auto);
               this.adv = this.auto && media.kind !== "video" ? browse2.advInit(this.dwell, 0, Date.now()) : null;
               if (media.kind === "video" && media.el) media.el.loop = this.modal && !this.auto;
-              setIcon2(pp, this.auto ? "pause" : "play");
-              pp.classList.toggle("mlog-tv__btn--active", this.modal && this.auto);
+              pp.setText(this.auto ? "Auto: on" : "Auto: off");
+              pp.classList.toggle("mlog-tv__btn--active", this.auto);
             },
-            this.modal && this.auto
+            this.auto
           );
+          pp.setText(this.auto ? "Auto: on" : "Auto: off");
           btn(row1, "Next", "chevron-right", () => this.step(1));
           const star = btn(
             row1,
@@ -1131,7 +1145,7 @@ var require_sifi = __commonJS({
           this.thumbs = new ThumbBudget();
           this.tv = null;
           this.tvMode = "unwatched";
-          this.autoAdvance = true;
+          this.autoAdvance = plugin.settings.autoAdvance !== false;
           this.captionCache = /* @__PURE__ */ new Map();
           this.captionsLoaded = false;
           this.captionsLoading = null;
@@ -1143,6 +1157,28 @@ var require_sifi = __commonJS({
         pageSize() {
           const n = Number(this.plugin.settings.pageSize);
           return n > 0 ? n : SIFI_DEFAULTS.pageSize;
+        }
+        setAutoAdvance(on) {
+          this.autoAdvance = !!on;
+          this.plugin.settings.autoAdvance = !!on;
+          this.plugin.saveSettings();
+        }
+        // Upstream's actions row gets a labelled Auto-advance toggle (owner: "i dont see the autoplay toggle").
+        renderDetail() {
+          super.renderDetail();
+          const d = this.detailEl;
+          if (!d || !this.selected) return;
+          const actions = d.querySelector(".mlog-detail__actions");
+          if (!actions) return;
+          const b = actions.createEl("button", {
+            cls: this.autoAdvance ? "mlog-action--active" : "",
+            text: `Auto-advance: ${this.autoAdvance ? "on" : "off"}`,
+            attr: { "aria-pressed": String(this.autoAdvance), title: "When a video ends, play the next one" }
+          });
+          b.addEventListener("click", () => {
+            this.setAutoAdvance(!this.autoAdvance);
+            this.renderDetail();
+          });
         }
         async onOpen() {
           await super.onOpen();
@@ -1558,6 +1594,8 @@ var require_sifi = __commonJS({
               if (i >= 0 && i < visible.length - 1) this.selectItem(visible[i + 1]);
             }
           });
+          const why = whyNoVideo(this.app, item);
+          if (why) container.createDiv({ cls: "mlog-detail__why", text: why });
         }
         renderError(err) {
           try {
@@ -1599,6 +1637,12 @@ var require_sifi = __commonJS({
             (t) => t.setValue(String(s.tvDwellSecs)).onChange(async (v) => {
               const n = parseInt(v, 10);
               s.tvDwellSecs = n > 0 ? n : SIFI_DEFAULTS.tvDwellSecs;
+              await this.plugin.saveSettings();
+            })
+          );
+          new Setting2(c).setName("Auto-advance").setDesc("When a video ends, play the next one; items without a video move on after the dwell. Also toggled from the player.").addToggle(
+            (t) => t.setValue(s.autoAdvance !== false).onChange(async (v) => {
+              s.autoAdvance = v;
               await this.plugin.saveSettings();
             })
           );

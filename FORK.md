@@ -41,6 +41,11 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.5 — 2026-09-05
+
+- A labelled Auto-advance toggle in the detail pane and the player ("Auto: on/off"), remembered as a setting.
+- One honest line under any item not playing a local video: not synced to this device yet / Instagram refused the download / a post.
+
 ### 1.4.0-sifi.4 — 2026-09-05
 
 - The pop-up auto-advances by default: next when a video ends, after the dwell (now 10s) for embeds and images; the pause button turns it off for the session. The desktop detail pane selects the next item when a video ends.
