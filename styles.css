@@ -107,6 +107,10 @@
 .mlog__error button { margin-top: 0.6rem; }
 
 .mlog-tv { position: fixed; inset: 0; z-index: 1000; background: #000; display: flex; align-items: center; justify-content: center; }
+.mlog-tv--modal { background: rgba(0, 0, 0, 0.94); }
+@media (max-width: 700px) {
+  .mlog--sifi .mlog__detail { display: none; } /* phones use the pop-up player instead of the detail pane */
+}
 .mlog-tv__panel { position: relative; width: min(94vw, calc(94vh * 9 / 16)); }
 .mlog-tv__panel .mlog-detail__media { width: 100%; max-height: 94vh; border-radius: 0; background: #000; }
 .mlog-tv__panel--wide { width: min(94vw, calc(94vh * 16 / 10)); }

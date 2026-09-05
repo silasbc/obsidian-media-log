@@ -564,15 +564,29 @@ var require_sifi = __commonJS({
           this.contentEl.empty();
         }
       }
+      function withScrollKept(el, fn) {
+        let scroller = el;
+        while (scroller && scroller !== document.body) {
+          const cs = getComputedStyle(scroller);
+          if (/(auto|scroll)/.test(cs.overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
+          scroller = scroller.parentElement;
+        }
+        const top = scroller ? scroller.scrollTop : 0;
+        fn();
+        if (scroller) scroller.scrollTop = top;
+      }
       class TvPlayer {
-        constructor(view, list, idx) {
+        constructor(view, list, idx, opts) {
           this.view = view;
           this.plugin = view.plugin;
           this.app = view.app;
           this.list = list;
           this.idx = idx;
-          this.auto = true;
-          this.mode = view.tvMode;
+          this.mode = opts && opts.mode || "tv";
+          this.modal = this.mode === "modal";
+          this.auto = !this.modal;
+          this.loop = !this.modal;
+          this.listMode = view.tvMode;
           const dwell = Number(this.plugin.settings.tvDwellSecs);
           this.dwell = dwell > 0 ? dwell : SIFI_DEFAULTS.tvDwellSecs;
           this.overlay = null;
@@ -586,8 +600,14 @@ var require_sifi = __commonJS({
           this.paintWatched = null;
         }
         open() {
-          this.overlay = document.body.createDiv({ cls: "mlog-tv" });
-          this.overlay.addEventListener("click", () => this.showControls());
+          this.overlay = document.body.createDiv({ cls: this.modal ? "mlog-tv mlog-tv--modal" : "mlog-tv" });
+          this.overlay.addEventListener("click", (e) => {
+            if (this.modal && e.target === this.overlay) {
+              this.close();
+              return;
+            }
+            this.showControls();
+          });
           this.panel = this.overlay.createDiv({ cls: "mlog-tv__panel" });
           this.ctl = this.overlay.createDiv({ cls: "mlog-tv__ctl" });
           this.keydown = (e) => {
@@ -630,7 +650,14 @@ var require_sifi = __commonJS({
           this.idx = idx;
           this.panel.empty();
           this.panel.classList.toggle("mlog-tv__panel--wide", !browse2.isPortrait(item));
-          const media = buildMedia(this.app, this.panel, item, { autoplay: true, loop: false, onEnded: () => this.step(1) });
+          const media = buildMedia(this.app, this.panel, item, {
+            autoplay: true,
+            loop: this.modal && !this.auto,
+            // the pop-up loops a reel until auto-advance is switched on
+            onEnded: () => {
+              if (this.auto) this.step(1);
+            }
+          });
           this.paintControls(item, media);
           this.watchT = setTimeout(async () => {
             if (item.watched) return;
@@ -651,8 +678,12 @@ var require_sifi = __commonJS({
         }
         step(dir) {
           const len = this.list.length;
-          const ni = dir > 0 ? browse2.nextIndex(this.idx, len, true) : browse2.prevIndex(this.idx, len, true);
+          const ni = dir > 0 ? browse2.nextIndex(this.idx, len, this.loop) : browse2.prevIndex(this.idx, len, this.loop);
           if (ni < 0) {
+            if (this.modal) {
+              this.adv = null;
+              return;
+            }
             this.close();
             return;
           }
@@ -661,7 +692,7 @@ var require_sifi = __commonJS({
         paintControls(item, media) {
           const ctl = this.ctl;
           ctl.empty();
-          ctl.createDiv({ cls: "mlog-tv__title", text: `${item.title} \xB7 ${this.idx + 1} / ${this.list.length}` });
+          ctl.createDiv({ cls: "mlog-tv__title", text: `${this.idx + 1} / ${this.list.length} \xB7 ${item.title}` });
           const btn = (parent, label, icon, onClick, active) => {
             const b = parent.createEl("button", {
               cls: "mlog-tv__btn" + (active ? " mlog-tv__btn--active" : ""),
@@ -678,11 +709,19 @@ var require_sifi = __commonJS({
           };
           const row1 = ctl.createDiv({ cls: "mlog-tv__row" });
           btn(row1, "Previous", "chevron-left", () => this.step(-1));
-          const pp = btn(row1, "Auto-advance", this.auto ? "pause" : "play", () => {
-            this.auto = !this.auto;
-            this.adv = this.auto && media.kind !== "video" ? browse2.advInit(this.dwell, 0, Date.now()) : null;
-            setIcon2(pp, this.auto ? "pause" : "play");
-          });
+          const pp = btn(
+            row1,
+            "Auto-advance",
+            this.auto ? "pause" : "play",
+            () => {
+              this.auto = !this.auto;
+              this.adv = this.auto && media.kind !== "video" ? browse2.advInit(this.dwell, 0, Date.now()) : null;
+              if (media.kind === "video" && media.el) media.el.loop = this.modal && !this.auto;
+              setIcon2(pp, this.auto ? "pause" : "play");
+              pp.classList.toggle("mlog-tv__btn--active", this.modal && this.auto);
+            },
+            this.modal && this.auto
+          );
           btn(row1, "Next", "chevron-right", () => this.step(1));
           const star = btn(
             row1,
@@ -708,20 +747,30 @@ var require_sifi = __commonJS({
           row1.createDiv({ cls: "mlog-tv__spacer" });
           btn(row1, "Close", "x", () => this.close());
           const row2 = ctl.createDiv({ cls: "mlog-tv__row" });
+          if (this.modal) {
+            if (item.sourceUrl) btn(row2, "Open source", "external-link", () => window.open(item.sourceUrl, "_blank"));
+            if (item.file) {
+              btn(row2, "Open note", "file-text", () => {
+                this.close();
+                this.app.workspace.openLinkText(item.file.path, "", false);
+              });
+            }
+            return;
+          }
           btn(
             row2,
-            this.mode === "unwatched" ? "Unwatched" : "All",
+            this.listMode === "unwatched" ? "Unwatched" : "All",
             null,
             () => {
-              this.mode = this.mode === "unwatched" ? "all" : "unwatched";
-              this.view.tvMode = this.mode;
-              const nl = this.view.tvList(this.mode);
+              this.listMode = this.listMode === "unwatched" ? "all" : "unwatched";
+              this.view.tvMode = this.listMode;
+              const nl = this.view.tvList(this.listMode);
               if (nl.length) {
                 this.list = nl;
                 this.show(0);
               }
             },
-            this.mode === "unwatched"
+            this.listMode === "unwatched"
           );
           const pills = row2.createDiv({ cls: "mlog-tv__pills" });
           for (const sec of [15, 30, 60]) {
@@ -758,8 +807,10 @@ var require_sifi = __commonJS({
         }
         close() {
           this.teardown();
-          this.view.renderGrid();
-          this.view.renderDetail();
+          withScrollKept(this.view.gridEl, () => {
+            this.view.renderGrid();
+            if (!this.modal) this.view.renderDetail();
+          });
         }
       }
       class SifiLibraryView extends LibraryView2 {
@@ -808,6 +859,7 @@ var require_sifi = __commonJS({
           this.toolsEl = null;
           await super.render();
           this.root.classList.toggle("mlog--portrait", !!this.plugin.settings.portraitCards);
+          this.root.classList.add("mlog--sifi");
           const body = this.gridEl && this.gridEl.parentElement;
           this.toolsEl = this.root.createDiv({ cls: "mlog__tools" });
           if (body) this.root.insertBefore(this.toolsEl, body);
@@ -829,6 +881,32 @@ var require_sifi = __commonJS({
           const unw = base.filter((x) => !x.watched);
           return mode === "unwatched" && unw.length ? unw : base;
         }
+        // On a phone the detail pane sits above the grid, so tapping a card far down a
+        // 64-card page used to scroll all the way back up, and playback started only
+        // after a frontmatter write, outside the tap. The phone gets the pop-up player
+        // instead, opened synchronously inside the tap so play() is allowed with sound.
+        async selectItem(item) {
+          if (isPhone()) {
+            try {
+              this.openModal(item);
+            } catch (e) {
+              this.renderError(e);
+            }
+            return;
+          }
+          return super.selectItem(item);
+        }
+        openModal(item) {
+          let list = this.filtered();
+          let idx = list.findIndex((c) => c.id === item.id);
+          if (idx < 0) {
+            list = [item];
+            idx = 0;
+          }
+          if (this.tv) this.tv.teardown();
+          this.tv = new TvPlayer(this, list, idx, { mode: "modal" });
+          this.tv.open();
+        }
         openTv() {
           const list = this.tvList(this.tvMode);
           if (!list.length) {
@@ -836,7 +914,7 @@ var require_sifi = __commonJS({
             return;
           }
           if (this.tv) this.tv.teardown();
-          this.tv = new TvPlayer(this, list, 0);
+          this.tv = new TvPlayer(this, list, 0, { mode: "tv" });
           this.tv.open();
         }
         ensureCaptions() {

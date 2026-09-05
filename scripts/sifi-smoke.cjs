@@ -146,6 +146,16 @@ const app = {
   assert.deepEqual(ids(view.filtered()), [items[0].id], "search reaches caption text");
   assert.equal(view.captionCache.size, 3, "captions are cached per file");
 
+  const modal = new MediaLogPlugin.sifi.TvPlayer(view, items, 1, { mode: "modal" });
+  assert.equal(modal.modal, true);
+  assert.equal(modal.auto, false, "the phone pop-up does not auto-advance until asked");
+  assert.equal(modal.loop, false, "the phone pop-up stops at the list's edges");
+  assert.equal(modal.idx, 1, "the pop-up opens on the tapped item");
+  const tv = new MediaLogPlugin.sifi.TvPlayer(view, items, 0);
+  assert.equal(tv.auto, true, "TV auto-advances");
+  assert.equal(tv.loop, true, "TV loops");
+  assert.equal(tv.dwell, 20, "TV dwell comes from settings");
+
   console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search.");
 })().catch((error) => {
   console.error(error);
