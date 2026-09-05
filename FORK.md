@@ -41,6 +41,11 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.4 — 2026-09-05
+
+- The pop-up auto-advances by default: next when a video ends, after the dwell (now 10s) for embeds and images; the pause button turns it off for the session. The desktop detail pane selects the next item when a video ends.
+- Items without a local video play Instagram's embed, which does not autoplay and eventually asks to open Instagram — the dwell moves past them.
+
 ### 1.4.0-sifi.3 — 2026-09-05
 
 - Sort control (newest, oldest, title, creator, unwatched first), month filter, tag chips with AND and an Untagged chip, live platform counts in the dropdown.

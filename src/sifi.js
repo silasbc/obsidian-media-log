@@ -26,7 +26,7 @@ const browse = require("./browse");
 const SIFI_DEFAULTS = {
   pageSize: 64,
   portraitCards: true,
-  tvDwellSecs: 20,
+  tvDwellSecs: 10, // owner ask 2026-09-05: about ten seconds for a plain meme
   quarantineLog: "Media Log/Deleted Media.md",
   guideNote: "Select/Guide/Media",
   posterFrames: true,
@@ -518,7 +518,10 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.idx = idx;
       this.mode = (opts && opts.mode) || "tv";
       this.modal = this.mode === "modal";
-      this.auto = !this.modal;
+      // Owner ask 2026-09-05: the pop-up moves on by itself too — next when a video
+      // ends, after the dwell for anything without a video. The pause button turns
+      // it off and the view remembers that for the session.
+      this.auto = this.modal ? view.autoAdvance !== false : true;
       this.loop = !this.modal;
       this.listMode = view.tvMode;
       const dwell = Number(this.plugin.settings.tvDwellSecs);
@@ -657,6 +660,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         this.auto ? "pause" : "play",
         () => {
           this.auto = !this.auto;
+          if (this.modal) this.view.autoAdvance = this.auto;
           this.adv = this.auto && media.kind !== "video" ? browse.advInit(this.dwell, 0, Date.now()) : null;
           if (media.kind === "video" && media.el) media.el.loop = this.modal && !this.auto;
           setIcon(pp, this.auto ? "pause" : "play");
@@ -829,6 +833,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.thumbs = new ThumbBudget();
       this.tv = null;
       this.tvMode = "unwatched"; // TV binges the unwatched by default; falls back to all when everything's seen
+      this.autoAdvance = true; // the pop-up and the detail pane move on when a video ends (pause button turns it off for the session)
       this.captionCache = new Map();
       this.captionsLoaded = false;
       this.captionsLoading = null;
@@ -1275,9 +1280,19 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       btn("»", pg.pageIdx >= pg.totalPages - 1, pg.totalPages - 1, "Last page");
     }
 
-    // Detail pane: autoplaying, looping, sized for the item's shape.
+    // Detail pane: autoplaying, sized for the item's shape; when a video ends the
+    // next visible item is selected (owner ask 2026-09-05), or it loops if auto-advance is off.
     renderMedia(container, item) {
-      buildMedia(this.app, container, item, { autoplay: true, loop: true });
+      buildMedia(this.app, container, item, {
+        autoplay: true,
+        loop: !this.autoAdvance,
+        onEnded: () => {
+          if (!this.autoAdvance || this.tv) return;
+          const visible = this.filtered();
+          const i = visible.findIndex((c) => c.id === item.id);
+          if (i >= 0 && i < visible.length - 1) this.selectItem(visible[i + 1]);
+        },
+      });
     }
 
     renderError(err) {
@@ -1325,8 +1340,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           })
         );
       new Setting(c)
-        .setName("TV dwell (seconds)")
-        .setDesc("How long TV mode stays on an embedded item before advancing. Local videos advance when they end.")
+        .setName("Dwell (seconds) for items without a video")
+        .setDesc("How long the player stays on an embed or image before moving on. Local videos move on when they end.")
         .addText((t) =>
           t.setValue(String(s.tvDwellSecs)).onChange(async (v) => {
             const n = parseInt(v, 10);

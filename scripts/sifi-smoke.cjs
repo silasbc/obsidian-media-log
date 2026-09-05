@@ -152,13 +152,16 @@ const app = {
 
   const modal = new MediaLogPlugin.sifi.TvPlayer(view, items, 1, { mode: "modal" });
   assert.equal(modal.modal, true);
-  assert.equal(modal.auto, false, "the phone pop-up does not auto-advance until asked");
+  assert.equal(modal.auto, true, "the pop-up auto-advances by default (owner ask 2026-09-05)");
+  view.autoAdvance = false;
+  assert.equal(new MediaLogPlugin.sifi.TvPlayer(view, items, 1, { mode: "modal" }).auto, false, "the pause choice is remembered for the session");
+  view.autoAdvance = true;
   assert.equal(modal.loop, false, "the phone pop-up stops at the list's edges");
   assert.equal(modal.idx, 1, "the pop-up opens on the tapped item");
   const tv = new MediaLogPlugin.sifi.TvPlayer(view, items, 0);
   assert.equal(tv.auto, true, "TV auto-advances");
   assert.equal(tv.loop, true, "TV loops");
-  assert.equal(tv.dwell, 20, "TV dwell comes from settings");
+  assert.equal(tv.dwell, 10, "dwell comes from settings (10s default)");
 
   console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search.");
 })().catch((error) => {
