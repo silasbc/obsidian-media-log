@@ -58,6 +58,20 @@ function monthLabelOf(dkey) {
   return mi >= 1 && mi <= 12 ? MONTHS[mi - 1] + " " + m[1] : "UNDATED";
 }
 
+// "2026-08-07" → "2026-08"; "" when undated.
+function monthKeyOf(dkey) {
+  const m = String(dkey || "").match(/^(\d{4}-\d{2})/);
+  return m ? m[1] : "";
+}
+
+// "2026-08" → "August 2026"
+function monthTitleOf(key) {
+  const m = String(key || "").match(/^(\d{4})-(\d{2})$/);
+  const mi = m ? parseInt(m[2], 10) : 0;
+  if (mi < 1 || mi > 12) return "Undated";
+  return MONTHS[mi - 1].charAt(0) + MONTHS[mi - 1].slice(1).toLowerCase() + " " + m[1];
+}
+
 // "2026-08-07" → "Aug 7"
 function shortDateOf(dkey) {
   const m = String(dkey || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -86,7 +100,25 @@ function groupByMonth(items) {
   return groups;
 }
 
-// ---- search, shuffle, paging -------------------------------------------------
+// Every month present → [{key, label, n}], newest first, undated last.
+function monthOptions(items) {
+  const m = {};
+  for (const it of items || []) {
+    const k = monthKeyOf(it && it.dkey) || "undated";
+    m[k] = (m[k] || 0) + 1;
+  }
+  return Object.keys(m)
+    .sort((a, b) => (a === "undated" ? 1 : b === "undated" ? -1 : a < b ? 1 : a > b ? -1 : 0))
+    .map((k) => ({ key: k, label: k === "undated" ? "Undated" : monthTitleOf(k), n: m[k] }));
+}
+
+function filterByMonth(list, key) {
+  const k = safeStr(key);
+  if (!k) return list || [];
+  return (list || []).filter((it) => (monthKeyOf(it && it.dkey) || "undated") === k);
+}
+
+// ---- search, sort, shuffle, paging ----------------------------------------------
 
 // Tokenized AND over title + creator + platform + tags + caption + url.
 function matchesQuery(it, q) {
@@ -98,6 +130,38 @@ function matchesQuery(it, q) {
     .join(" ")
     .toLowerCase();
   return s.split(/\s+/).every((t) => !t || hay.indexOf(t) >= 0);
+}
+
+const SORTS = [
+  { key: "newest", label: "Newest" },
+  { key: "oldest", label: "Oldest" },
+  { key: "title", label: "Title A–Z" },
+  { key: "creator", label: "Creator A–Z" },
+  { key: "unwatched", label: "Unwatched first" },
+];
+
+// The plugin's sortKey (digits) wins; fixtures without one fall back to dkey.
+function stampOf(it) {
+  return safeStr(it && it.sortKey) || safeStr(it && it.dkey).replace(/-/g, "");
+}
+
+// A new array; ties keep newest-first. Unknown keys behave like "newest".
+function sortItems(list, key) {
+  const out = (list || []).slice();
+  const newest = (a, b) => (stampOf(a) < stampOf(b) ? 1 : stampOf(a) > stampOf(b) ? -1 : 0);
+  const text = (f) => (a, b) => safeStr(f(a)).localeCompare(safeStr(f(b)), undefined, { sensitivity: "base" }) || newest(a, b);
+  switch (key) {
+    case "oldest":
+      return out.sort((a, b) => -newest(a, b));
+    case "title":
+      return out.sort(text((it) => it.title));
+    case "creator":
+      return out.sort(text((it) => it.creator));
+    case "unwatched":
+      return out.sort((a, b) => (a.watched ? 1 : 0) - (b.watched ? 1 : 0) || newest(a, b));
+    default:
+      return out.sort(newest);
+  }
 }
 
 // Deterministic LCG shuffle — same seed, same deal; input untouched.
@@ -123,7 +187,48 @@ function paginate(list, pageIdx, pageSize) {
   const size = pageSize > 0 ? pageSize : 64;
   const totalPages = Math.max(1, Math.ceil(n / size));
   const idx = Math.min(Math.max(pageIdx || 0, 0), totalPages - 1);
-  return { items: (list || []).slice(idx * size, idx * size + size), pageIdx: idx, totalPages, total: n };
+  return { items: (list || []).slice(idx * size, idx * size + size), pageIdx: idx, totalPages, total: n, pageSize: size };
+}
+
+// "1–64 / 430"; "0 / 0" for an empty list.
+function rangeLabel(pg) {
+  if (!pg || !pg.total) return "0 / 0";
+  const size = pg.pageSize > 0 ? pg.pageSize : pg.items.length || 1;
+  const first = pg.pageIdx * size + 1;
+  const last = Math.min(pg.total, first + pg.items.length - 1);
+  return `${first}–${last} / ${pg.total}`;
+}
+
+// ---- tags --------------------------------------------------------------------
+
+// Case-insensitive merge across items → [{key, label, n}], count desc, alpha ties, first casing wins.
+function tagUniverse(items) {
+  const m = {};
+  for (const it of items || []) {
+    for (const t of (it && it.tags) || []) {
+      const label = safeStr(t);
+      if (!label) continue;
+      const k = label.toLowerCase();
+      if (!m[k]) m[k] = { key: k, label, n: 0 };
+      m[k].n += 1;
+    }
+  }
+  return Object.values(m).sort((a, b) => b.n - a.n || (a.key < b.key ? -1 : 1));
+}
+
+function untaggedCount(items) {
+  return (items || []).filter((it) => !((it && it.tags) || []).length).length;
+}
+
+// AND over every selected tag key; `untagged` shows only items with no tags.
+function filterByTags(list, keys, untagged) {
+  if (untagged) return (list || []).filter((it) => !((it && it.tags) || []).length);
+  const ks = (keys || []).map((k) => String(k).toLowerCase()).filter(Boolean);
+  if (!ks.length) return list || [];
+  return (list || []).filter((it) => {
+    const low = (it && it.tagsLow) || ((it && it.tags) || []).map((t) => String(t).toLowerCase());
+    return ks.every((k) => low.includes(k));
+  });
 }
 
 // ---- playlist stepping + auto-advance ---------------------------------------
@@ -280,6 +385,26 @@ function autoplayUrl(url) {
   return s + (s.indexOf("?") >= 0 ? "&" : "?") + "autoplay=1";
 }
 
+// ---- poster frames -----------------------------------------------------------
+
+// Where a generated poster frame lives: the plugin's own screenshot convention.
+function posterPath(item, assetsFolder) {
+  const dir = safeStr(assetsFolder).replace(/\/+$/, "") || "Media Log/Assets";
+  return `${dir}/${safeStr(item && item.id)}.jpg`;
+}
+
+// Items with a real local video and no usable screenshot. `hasVideo` and
+// `hasShot` answer whether the referenced vault files exist.
+function posterCandidates(items, hasVideo, hasShot) {
+  return (items || []).filter((it) => {
+    if (!it || !it.id) return false;
+    const v = safeStr(it.video);
+    if (!v || v.toLowerCase() === "none" || !hasVideo(it)) return false;
+    const s = safeStr(it.screenshot);
+    return !(s && hasShot(it));
+  });
+}
+
 // ---- the visible-list pipeline ----------------------------------------------
 
 function matchesReview(item, filter) {
@@ -299,17 +424,29 @@ function baseFilter(items, f) {
   });
 }
 
-// filters → on-this-day → search (captions included) → shuffled deal.
-// A shuffled deal is capped at one page: that IS the "Random 64".
+// filters → tag chips → month → on-this-day → search (captions included) →
+// sort → shuffled deal. A shuffled deal is capped at one page: that IS the
+// "Random 64". Sorting other than newest is explicit; upstream's order stands otherwise.
 function visibleList(items, filter, opts) {
   const f = filter || {};
   const o = opts || {};
   let L = baseFilter(items, f);
+  L = filterByTags(L, f.tags, f.untagged);
+  if (f.month) L = filterByMonth(L, f.month);
   if (f.onDay) L = onThisDayItems(L, o.todayMMDD || "");
   const q = safeStr(f.search);
   if (q) L = L.filter((it) => matchesQuery(it, q));
+  if (f.sort && f.sort !== "newest") L = sortItems(L, f.sort);
   if (f.seed !== null && f.seed !== undefined) L = shuffleBySeed(L, f.seed).slice(0, o.pageSize > 0 ? o.pageSize : 64);
   return L;
+}
+
+// Counts per platform inside every OTHER active filter (the original's live counts).
+function platformCounts(items, filter, opts) {
+  const f = { ...(filter || {}), platform: "", seed: null };
+  const counts = {};
+  for (const it of visibleList(items, f, opts)) counts[it.platform] = (counts[it.platform] || 0) + 1;
+  return counts;
 }
 
 // Adds the fork's derived fields to an upstream item. Every field is optional
@@ -327,6 +464,7 @@ function enrichItem(item, fm) {
 
 module.exports = {
   MONTHS,
+  SORTS,
   safeStr,
   hostOf,
   itemUrl,
@@ -334,12 +472,21 @@ module.exports = {
   mmddOf,
   todayMMDD,
   monthLabelOf,
+  monthKeyOf,
+  monthTitleOf,
   shortDateOf,
   onThisDayItems,
   groupByMonth,
+  monthOptions,
+  filterByMonth,
   matchesQuery,
+  sortItems,
   shuffleBySeed,
   paginate,
+  rangeLabel,
+  tagUniverse,
+  untaggedCount,
+  filterByTags,
   nextIndex,
   prevIndex,
   advInit,
@@ -354,8 +501,11 @@ module.exports = {
   kindOf,
   isPortrait,
   autoplayUrl,
+  posterPath,
+  posterCandidates,
   matchesReview,
   baseFilter,
   visibleList,
+  platformCounts,
   enrichItem,
 };

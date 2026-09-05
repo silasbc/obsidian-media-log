@@ -275,6 +275,100 @@ test("visibleList: filters → on-this-day → search → shuffled deal", () => 
   assert.deepEqual(b.visibleList(null, {}, opts), []);
 });
 
+// ---- sort, months, tags, counts, pager, posters (1.4.0-sifi.3) ----
+const SORTABLE = [
+  { id: "a", title: "Zebra", creator: "Bea", sortKey: "20260904090000", watched: true },
+  { id: "b", title: "apple", creator: "Al", sortKey: "20260807142800", watched: false },
+  { id: "c", title: "Mango", creator: "Cy", sortKey: "20250904090000", watched: false },
+];
+
+test("sortItems: newest, oldest, title, creator, unwatched first; input untouched", () => {
+  const ids = (l) => l.map((i) => i.id);
+  assert.deepEqual(ids(b.sortItems(SORTABLE, "newest")), ["a", "b", "c"]);
+  assert.deepEqual(ids(b.sortItems(SORTABLE, "oldest")), ["c", "b", "a"]);
+  assert.deepEqual(ids(b.sortItems(SORTABLE, "title")), ["b", "c", "a"], "case-insensitive");
+  assert.deepEqual(ids(b.sortItems(SORTABLE, "creator")), ["b", "a", "c"]);
+  assert.deepEqual(ids(b.sortItems(SORTABLE, "unwatched")), ["b", "c", "a"], "unwatched first, then newest");
+  assert.deepEqual(ids(b.sortItems(SORTABLE, "bogus")), ["a", "b", "c"], "unknown key behaves like newest");
+  assert.deepEqual(ids(SORTABLE), ["a", "b", "c"], "input untouched");
+  assert.deepEqual(b.sortItems([{ id: "x", dkey: "2026-01-01" }, { id: "y", dkey: "2026-02-01" }], "newest").map((i) => i.id), ["y", "x"], "dkey fallback");
+});
+
+test("monthKeyOf / monthTitleOf / monthOptions / filterByMonth", () => {
+  assert.equal(b.monthKeyOf("2026-08-07"), "2026-08");
+  assert.equal(b.monthKeyOf(""), "");
+  assert.equal(b.monthTitleOf("2026-08"), "August 2026");
+  assert.equal(b.monthTitleOf("nope"), "Undated");
+  const items = [{ dkey: "2026-08-07" }, { dkey: "2026-08-01" }, { dkey: "2026-07-28" }, { dkey: "" }];
+  assert.deepEqual(b.monthOptions(items), [
+    { key: "2026-08", label: "August 2026", n: 2 },
+    { key: "2026-07", label: "July 2026", n: 1 },
+    { key: "undated", label: "Undated", n: 1 },
+  ]);
+  assert.equal(b.filterByMonth(items, "2026-08").length, 2);
+  assert.equal(b.filterByMonth(items, "undated").length, 1);
+  assert.equal(b.filterByMonth(items, "").length, 4);
+});
+
+test("tagUniverse / untaggedCount / filterByTags: case-insensitive AND, Untagged", () => {
+  const items = [
+    { id: "1", tags: ["Bench", "meet"], tagsLow: ["bench", "meet"] },
+    { id: "2", tags: ["bench", "squat"], tagsLow: ["bench", "squat"] },
+    { id: "3", tags: ["squat"] },
+    { id: "4", tags: [] },
+  ];
+  assert.deepEqual(b.tagUniverse(items), [
+    { key: "bench", label: "Bench", n: 2 },
+    { key: "squat", label: "squat", n: 2 },
+    { key: "meet", label: "meet", n: 1 },
+  ]);
+  assert.equal(b.untaggedCount(items), 1);
+  assert.deepEqual(b.filterByTags(items, ["bench"]).map((i) => i.id), ["1", "2"]);
+  assert.deepEqual(b.filterByTags(items, ["BENCH", "squat"]).map((i) => i.id), ["2"], "AND, any casing");
+  assert.deepEqual(b.filterByTags(items, ["squat"]).map((i) => i.id), ["2", "3"], "tagsLow optional");
+  assert.deepEqual(b.filterByTags(items, [], true).map((i) => i.id), ["4"], "Untagged");
+  assert.equal(b.filterByTags(items, []).length, 4);
+  assert.deepEqual(b.tagUniverse([]), []);
+});
+
+test("rangeLabel: first–last / total, empty list", () => {
+  const list = Array.from({ length: 150 }, (_, i) => i);
+  assert.equal(b.rangeLabel(b.paginate(list, 0, 64)), "1–64 / 150");
+  assert.equal(b.rangeLabel(b.paginate(list, 2, 64)), "129–150 / 150");
+  assert.equal(b.rangeLabel(b.paginate([], 0, 64)), "0 / 0");
+});
+
+test("platformCounts: counts inside the other active filters, platform itself ignored", () => {
+  const counts = b.platformCounts(ITEMS, { platform: "Web", review: "unwatched" }, { todayMMDD: "09-04" });
+  assert.deepEqual(counts, { Instagram: 1, YouTube: 1, Web: 1 });
+  assert.deepEqual(b.platformCounts(ITEMS, { search: "belt" }, {}), { Instagram: 1 });
+});
+
+test("visibleList: tags, untagged, month, and sort join the pipeline", () => {
+  const opts = { todayMMDD: "09-04", pageSize: 64 };
+  assert.deepEqual(b.visibleList(ITEMS, { tags: ["bench"] }, opts).map((i) => i.id), ["a", "d"]);
+  assert.deepEqual(b.visibleList(ITEMS, { untagged: true }, opts).map((i) => i.id), ["c"]);
+  assert.deepEqual(b.visibleList(ITEMS, { month: "2026-09" }, opts).map((i) => i.id), ["a"]);
+  assert.deepEqual(b.visibleList(ITEMS, { sort: "title" }, opts).map((i) => i.id), ["c", "d", "a", "b"]);
+  assert.deepEqual(b.visibleList(ITEMS, { sort: "newest" }, opts).map((i) => i.id), ["a", "b", "c", "d"], "newest keeps upstream order");
+});
+
+test("posterPath / posterCandidates: local video without a usable screenshot", () => {
+  assert.equal(b.posterPath({ id: "ml-1" }, "Media Log/Assets/"), "Media Log/Assets/ml-1.jpg");
+  assert.equal(b.posterPath({ id: "ml-1" }, ""), "Media Log/Assets/ml-1.jpg");
+  const items = [
+    { id: "v", video: "Media Log/Assets/Video/v.mp4", screenshot: "" },
+    { id: "s", video: "Media Log/Assets/Video/s.mp4", screenshot: "Media Log/Assets/s.jpg" },
+    { id: "g", video: "Media Log/Assets/Video/g.mp4", screenshot: "Media Log/Assets/gone.jpg" },
+    { id: "n", video: "none" },
+    { id: "e", video: "" },
+    { id: "m", video: "Media Log/Assets/Video/missing.mp4" },
+  ];
+  const hasVideo = (it) => it.id !== "m";
+  const hasShot = (it) => it.screenshot === "Media Log/Assets/s.jpg";
+  assert.deepEqual(b.posterCandidates(items, hasVideo, hasShot).map((i) => i.id), ["v", "g"]);
+});
+
 test("enrichItem: remote preview, kind, dkey, tagsLow, caption slot", () => {
   const item = { id: "ml-20260707-160000-instagram-instagram-reel-x", sourceUrl: "https://www.instagram.com/reel/X/", capturedAt: "", tags: ["Bench"] };
   b.enrichItem(item, { preview_remote: "https://cdn.example.com/t.jpg", kind: "reel" });

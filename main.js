@@ -42,6 +42,16 @@ var require_browse = __commonJS({
       const mi = m ? parseInt(m[2], 10) : 0;
       return mi >= 1 && mi <= 12 ? MONTHS[mi - 1] + " " + m[1] : "UNDATED";
     }
+    function monthKeyOf(dkey) {
+      const m = String(dkey || "").match(/^(\d{4}-\d{2})/);
+      return m ? m[1] : "";
+    }
+    function monthTitleOf(key) {
+      const m = String(key || "").match(/^(\d{4})-(\d{2})$/);
+      const mi = m ? parseInt(m[2], 10) : 0;
+      if (mi < 1 || mi > 12) return "Undated";
+      return MONTHS[mi - 1].charAt(0) + MONTHS[mi - 1].slice(1).toLowerCase() + " " + m[1];
+    }
     function shortDateOf(dkey) {
       const m = String(dkey || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
       const mi = m ? parseInt(m[2], 10) : 0;
@@ -64,12 +74,52 @@ var require_browse = __commonJS({
       }
       return groups;
     }
+    function monthOptions(items) {
+      const m = {};
+      for (const it of items || []) {
+        const k = monthKeyOf(it && it.dkey) || "undated";
+        m[k] = (m[k] || 0) + 1;
+      }
+      return Object.keys(m).sort((a, b) => a === "undated" ? 1 : b === "undated" ? -1 : a < b ? 1 : a > b ? -1 : 0).map((k) => ({ key: k, label: k === "undated" ? "Undated" : monthTitleOf(k), n: m[k] }));
+    }
+    function filterByMonth(list, key) {
+      const k = safeStr(key);
+      if (!k) return list || [];
+      return (list || []).filter((it) => (monthKeyOf(it && it.dkey) || "undated") === k);
+    }
     function matchesQuery(it, q) {
       const s = safeStr(q).toLowerCase();
       if (!s) return true;
       if (!it) return false;
       const hay = [it.title, it.creator, it.platform, (it.tags || []).join(" "), it.caption, itemUrl(it)].map((v) => safeStr(v)).join(" ").toLowerCase();
       return s.split(/\s+/).every((t) => !t || hay.indexOf(t) >= 0);
+    }
+    var SORTS = [
+      { key: "newest", label: "Newest" },
+      { key: "oldest", label: "Oldest" },
+      { key: "title", label: "Title A\u2013Z" },
+      { key: "creator", label: "Creator A\u2013Z" },
+      { key: "unwatched", label: "Unwatched first" }
+    ];
+    function stampOf(it) {
+      return safeStr(it && it.sortKey) || safeStr(it && it.dkey).replace(/-/g, "");
+    }
+    function sortItems(list, key) {
+      const out = (list || []).slice();
+      const newest = (a, b) => stampOf(a) < stampOf(b) ? 1 : stampOf(a) > stampOf(b) ? -1 : 0;
+      const text = (f) => (a, b) => safeStr(f(a)).localeCompare(safeStr(f(b)), void 0, { sensitivity: "base" }) || newest(a, b);
+      switch (key) {
+        case "oldest":
+          return out.sort((a, b) => -newest(a, b));
+        case "title":
+          return out.sort(text((it) => it.title));
+        case "creator":
+          return out.sort(text((it) => it.creator));
+        case "unwatched":
+          return out.sort((a, b) => (a.watched ? 1 : 0) - (b.watched ? 1 : 0) || newest(a, b));
+        default:
+          return out.sort(newest);
+      }
     }
     function shuffleBySeed(list, seed) {
       const out = (list || []).slice();
@@ -91,7 +141,39 @@ var require_browse = __commonJS({
       const size = pageSize > 0 ? pageSize : 64;
       const totalPages = Math.max(1, Math.ceil(n / size));
       const idx = Math.min(Math.max(pageIdx || 0, 0), totalPages - 1);
-      return { items: (list || []).slice(idx * size, idx * size + size), pageIdx: idx, totalPages, total: n };
+      return { items: (list || []).slice(idx * size, idx * size + size), pageIdx: idx, totalPages, total: n, pageSize: size };
+    }
+    function rangeLabel(pg) {
+      if (!pg || !pg.total) return "0 / 0";
+      const size = pg.pageSize > 0 ? pg.pageSize : pg.items.length || 1;
+      const first = pg.pageIdx * size + 1;
+      const last = Math.min(pg.total, first + pg.items.length - 1);
+      return `${first}\u2013${last} / ${pg.total}`;
+    }
+    function tagUniverse(items) {
+      const m = {};
+      for (const it of items || []) {
+        for (const t of it && it.tags || []) {
+          const label = safeStr(t);
+          if (!label) continue;
+          const k = label.toLowerCase();
+          if (!m[k]) m[k] = { key: k, label, n: 0 };
+          m[k].n += 1;
+        }
+      }
+      return Object.values(m).sort((a, b) => b.n - a.n || (a.key < b.key ? -1 : 1));
+    }
+    function untaggedCount(items) {
+      return (items || []).filter((it) => !(it && it.tags || []).length).length;
+    }
+    function filterByTags(list, keys, untagged) {
+      if (untagged) return (list || []).filter((it) => !(it && it.tags || []).length);
+      const ks = (keys || []).map((k) => String(k).toLowerCase()).filter(Boolean);
+      if (!ks.length) return list || [];
+      return (list || []).filter((it) => {
+        const low = it && it.tagsLow || (it && it.tags || []).map((t) => String(t).toLowerCase());
+        return ks.every((k) => low.includes(k));
+      });
     }
     function nextIndex(i, len, loop) {
       if (len <= 0) return -1;
@@ -212,6 +294,19 @@ var require_browse = __commonJS({
       if (/[?&]autoplay=/i.test(s)) return s;
       return s + (s.indexOf("?") >= 0 ? "&" : "?") + "autoplay=1";
     }
+    function posterPath(item, assetsFolder) {
+      const dir = safeStr(assetsFolder).replace(/\/+$/, "") || "Media Log/Assets";
+      return `${dir}/${safeStr(item && item.id)}.jpg`;
+    }
+    function posterCandidates(items, hasVideo, hasShot) {
+      return (items || []).filter((it) => {
+        if (!it || !it.id) return false;
+        const v = safeStr(it.video);
+        if (!v || v.toLowerCase() === "none" || !hasVideo(it)) return false;
+        const s = safeStr(it.screenshot);
+        return !(s && hasShot(it));
+      });
+    }
     function matchesReview(item, filter) {
       if (filter === "unwatched") return !item.watched;
       if (filter === "watched") return !!item.watched;
@@ -230,11 +325,20 @@ var require_browse = __commonJS({
       const f = filter || {};
       const o = opts || {};
       let L = baseFilter(items, f);
+      L = filterByTags(L, f.tags, f.untagged);
+      if (f.month) L = filterByMonth(L, f.month);
       if (f.onDay) L = onThisDayItems(L, o.todayMMDD || "");
       const q = safeStr(f.search);
       if (q) L = L.filter((it) => matchesQuery(it, q));
+      if (f.sort && f.sort !== "newest") L = sortItems(L, f.sort);
       if (f.seed !== null && f.seed !== void 0) L = shuffleBySeed(L, f.seed).slice(0, o.pageSize > 0 ? o.pageSize : 64);
       return L;
+    }
+    function platformCounts(items, filter, opts) {
+      const f = { ...filter || {}, platform: "", seed: null };
+      const counts = {};
+      for (const it of visibleList(items, f, opts)) counts[it.platform] = (counts[it.platform] || 0) + 1;
+      return counts;
     }
     function enrichItem(item, fm) {
       const f = fm || {};
@@ -248,6 +352,7 @@ var require_browse = __commonJS({
     }
     module2.exports = {
       MONTHS,
+      SORTS,
       safeStr,
       hostOf,
       itemUrl,
@@ -255,12 +360,21 @@ var require_browse = __commonJS({
       mmddOf,
       todayMMDD,
       monthLabelOf,
+      monthKeyOf,
+      monthTitleOf,
       shortDateOf,
       onThisDayItems,
       groupByMonth,
+      monthOptions,
+      filterByMonth,
       matchesQuery,
+      sortItems,
       shuffleBySeed,
       paginate,
+      rangeLabel,
+      tagUniverse,
+      untaggedCount,
+      filterByTags,
       nextIndex,
       prevIndex,
       advInit,
@@ -275,9 +389,12 @@ var require_browse = __commonJS({
       kindOf,
       isPortrait,
       autoplayUrl,
+      posterPath,
+      posterCandidates,
       matchesReview,
       baseFilter,
       visibleList,
+      platformCounts,
       enrichItem
     };
   }
@@ -293,16 +410,31 @@ var require_sifi = __commonJS({
       pageSize: 64,
       portraitCards: true,
       tvDwellSecs: 20,
-      quarantineLog: "Media Log/Deleted Media.md"
+      quarantineLog: "Media Log/Deleted Media.md",
+      guideNote: "Select/Guide/Media",
+      posterFrames: true,
+      bottomBar: true
     };
     var THUMB_LIVE_MAX = 24;
     var WATCH_DWELL_MS = 3e3;
     var TICK_MS = 500;
     var CONTROLS_FADE_MS = 2500;
+    var REFRESH_DEBOUNCE_MS = 900;
+    var POSTER_MAX_WIDTH = 540;
+    var POSTER_TIMEOUT_MS = 12e3;
+    var BOTTOM_BAR_TABS = [
+      { label: "Home", link: "Home", icon: "<path d='M3 10.5 12 3l9 7.5'/><path d='M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5'/>" },
+      { label: "Train", link: "Dashboard", icon: "<path d='M8 12h8'/><rect x='4' y='7.5' width='3' height='9' rx='1'/><rect x='17' y='7.5' width='3' height='9' rx='1'/><path d='M2 10.5v3'/><path d='M22 10.5v3'/>" },
+      { label: "Health", link: "Health Dashboard", icon: "<path d='M12 20.5 4.6 13a5 5 0 0 1 7-7.1l.4.4.4-.4a5 5 0 0 1 7 7.1z'/>" },
+      { label: "Media", link: "Media Library", icon: "<rect x='3' y='5' width='18' height='14' rx='2'/><path d='m10 9.2 4.6 2.8-4.6 2.8z'/>" },
+      { label: "Mauston", link: "Mauston/Mauston", icon: "<path d='M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z'/><path d='M9 4v14'/><path d='M15 6v14'/>" }
+    ];
+    var svgIcon = (p) => "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>" + p + "</svg>";
     function build({ LibraryView: LibraryView2, MediaLogSettingTab: MediaLogSettingTab2, DEFAULT_SETTINGS: DEFAULT_SETTINGS2, hasTextSelectionWithin: hasTextSelectionWithin2 }) {
       Object.assign(DEFAULT_SETTINGS2, SIFI_DEFAULTS);
       const textSelected = typeof hasTextSelectionWithin2 === "function" ? hasTextSelectionWithin2 : () => false;
       const isPhone = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches;
+      const isMobileApp = (app) => !!(app && app.isMobile);
       function guard(view, names) {
         for (const name of names) {
           const orig = view[name];
@@ -322,6 +454,17 @@ var require_sifi = __commonJS({
         const shot = item.screenshot && app.vault.getAbstractFileByPath(item.screenshot);
         if (shot) return app.vault.getResourcePath(shot);
         return item.previewRemote || "";
+      }
+      function withScrollKept(el, fn) {
+        let scroller = el;
+        while (scroller && scroller !== document.body) {
+          const cs = getComputedStyle(scroller);
+          if (/(auto|scroll)/.test(cs.overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
+          scroller = scroller.parentElement;
+        }
+        const top = scroller ? scroller.scrollTop : 0;
+        fn();
+        if (scroller) scroller.scrollTop = top;
       }
       class ThumbBudget {
         constructor() {
@@ -458,6 +601,135 @@ var require_sifi = __commonJS({
         const ph = container.createDiv({ cls: cls + " mlog-detail__media--empty", text: item.platform || "No media" });
         return { kind: "none", el: ph };
       }
+      class PosterFactory {
+        constructor(plugin) {
+          this.plugin = plugin;
+          this.app = plugin.app;
+          this.running = false;
+          this.done = 0;
+          this.failed = 0;
+        }
+        candidates(items) {
+          const vault = this.app.vault;
+          return browse2.posterCandidates(
+            items,
+            (it) => !!vault.getAbstractFileByPath(it.video),
+            (it) => !!vault.getAbstractFileByPath(it.screenshot)
+          );
+        }
+        async run(items, hooks) {
+          if (this.running) return;
+          const list = this.candidates(items);
+          if (!list.length) return;
+          const h = hooks || {};
+          this.running = true;
+          this.done = 0;
+          this.failed = 0;
+          try {
+            for (const item of list) {
+              if (!this.running) break;
+              try {
+                if (await this.makePoster(item)) {
+                  this.done++;
+                  if (h.onEach) h.onEach(item);
+                } else {
+                  this.failed++;
+                }
+              } catch {
+                this.failed++;
+              }
+              await new Promise((r) => setTimeout(r, 60));
+            }
+            if (this.done) new Notice2(`Media Log: ${this.done} poster frame${this.done === 1 ? "" : "s"} written${this.failed ? `, ${this.failed} skipped` : ""}`);
+          } finally {
+            this.running = false;
+            if (h.onDone) h.onDone(this.done, this.failed);
+          }
+        }
+        stop() {
+          this.running = false;
+        }
+        async makePoster(item) {
+          const vault = this.app.vault;
+          const file = vault.getAbstractFileByPath(item.video);
+          if (!file) return false;
+          const dest = browse2.posterPath(item, this.plugin.settings.assetsFolder);
+          if (!vault.getAbstractFileByPath(dest)) {
+            const bytes = await vault.readBinary(file);
+            const url = URL.createObjectURL(new Blob([bytes], { type: "video/mp4" }));
+            let blob = null;
+            try {
+              blob = await this.frameOf(url);
+            } finally {
+              URL.revokeObjectURL(url);
+            }
+            if (!blob) return false;
+            await this.plugin.ensureFolder(String(this.plugin.settings.assetsFolder));
+            await vault.createBinary(dest, await blob.arrayBuffer());
+          }
+          await this.app.fileManager.processFrontMatter(item.file, (fm) => {
+            fm.screenshot = dest;
+          });
+          item.screenshot = dest;
+          return true;
+        }
+        frameOf(src) {
+          return new Promise((resolve) => {
+            const video = document.createElement("video");
+            let settled = false;
+            const cleanup = () => {
+              clearTimeout(timer);
+              try {
+                video.pause();
+                video.removeAttribute("src");
+                video.load();
+              } catch {
+              }
+              video.remove();
+            };
+            const finish = (v) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              resolve(v);
+            };
+            const timer = setTimeout(() => finish(null), POSTER_TIMEOUT_MS);
+            video.muted = true;
+            video.playsInline = true;
+            video.preload = "auto";
+            video.addEventListener("error", () => finish(null));
+            video.addEventListener("loadedmetadata", () => {
+              const d = Number.isFinite(video.duration) ? video.duration : 2;
+              try {
+                video.currentTime = Math.min(1, Math.max(0.1, d * 0.1));
+              } catch {
+                finish(null);
+              }
+            });
+            video.addEventListener("seeked", () => {
+              try {
+                const w = video.videoWidth;
+                const hgt = video.videoHeight;
+                if (!w || !hgt) {
+                  finish(null);
+                  return;
+                }
+                const scale = Math.min(1, POSTER_MAX_WIDTH / w);
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.round(w * scale);
+                canvas.height = Math.round(hgt * scale);
+                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                canvas.toBlob((blob) => finish(blob || null), "image/jpeg", 0.82);
+              } catch {
+                finish(null);
+              }
+            });
+            video.style.cssText = "position:fixed;left:-9999px;top:0;width:10px;height:10px;opacity:0;pointer-events:none;";
+            document.body.appendChild(video);
+            video.src = src;
+          });
+        }
+      }
       async function appendQuarantine(plugin, lines) {
         const app = plugin.app;
         const path = String(plugin.settings.quarantineLog || SIFI_DEFAULTS.quarantineLog);
@@ -564,17 +836,6 @@ var require_sifi = __commonJS({
           this.contentEl.empty();
         }
       }
-      function withScrollKept(el, fn) {
-        let scroller = el;
-        while (scroller && scroller !== document.body) {
-          const cs = getComputedStyle(scroller);
-          if (/(auto|scroll)/.test(cs.overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
-          scroller = scroller.parentElement;
-        }
-        const top = scroller ? scroller.scrollTop : 0;
-        fn();
-        if (scroller) scroller.scrollTop = top;
-      }
       class TvPlayer {
         constructor(view, list, idx, opts) {
           this.view = view;
@@ -616,6 +877,7 @@ var require_sifi = __commonJS({
             else if (e.key === "ArrowLeft") this.step(-1);
           };
           document.addEventListener("keydown", this.keydown);
+          if (this.view.bar) this.view.bar.hide(true);
           this.show(this.idx);
         }
         clearTimers() {
@@ -804,6 +1066,7 @@ var require_sifi = __commonJS({
           if (this.overlay) this.overlay.remove();
           this.overlay = this.panel = this.ctl = null;
           if (this.view.tv === this) this.view.tv = null;
+          if (this.view.bar) this.view.bar.hide(false);
         }
         close() {
           this.teardown();
@@ -813,19 +1076,64 @@ var require_sifi = __commonJS({
           });
         }
       }
+      class BottomBar {
+        constructor(view) {
+          this.view = view;
+          this.el = null;
+          this.timer = null;
+        }
+        wanted() {
+          return !!this.view.plugin.settings.bottomBar && (isMobileApp(this.view.app) || isPhone());
+        }
+        visible() {
+          const c = this.view.containerEl;
+          return !!(c && c.isConnected && c.getClientRects().length);
+        }
+        mount() {
+          if (this.el || !this.wanted() || !this.visible()) return;
+          const el = document.body.createDiv({ cls: "mlog-bar" });
+          for (const t of BOTTOM_BAR_TABS) {
+            const on = t.label === "Media";
+            const b = el.createEl("button", { cls: "mlog-bar__slot" + (on ? " mlog-bar__slot--on" : ""), attr: { "aria-label": t.label } });
+            b.createDiv({ cls: "mlog-bar__icon" }).innerHTML = svgIcon(t.icon);
+            b.createDiv({ cls: "mlog-bar__label", text: t.label });
+            b.addEventListener("click", () => {
+              if (!on) this.view.app.workspace.openLinkText(t.link, "", false);
+            });
+          }
+          this.el = el;
+          if (this.view.root) this.view.root.classList.add("mlog--barred");
+          this.timer = setInterval(() => {
+            if (!this.visible()) this.unmount();
+          }, 1e3);
+        }
+        hide(h) {
+          if (this.el) this.el.classList.toggle("mlog-bar--hidden", !!h);
+        }
+        unmount() {
+          if (this.timer) clearInterval(this.timer);
+          this.timer = null;
+          if (this.el) this.el.remove();
+          this.el = null;
+          if (this.view.root) this.view.root.classList.remove("mlog--barred");
+        }
+      }
       class SifiLibraryView extends LibraryView2 {
         constructor(leaf, plugin) {
           super(leaf, plugin);
-          Object.assign(this.filter, { onDay: false, seed: null });
+          Object.assign(this.filter, { onDay: false, seed: null, tags: [], untagged: false, month: "", sort: "newest" });
           this.page = 0;
           this.lastKey = "";
           this.toolsEl = null;
+          this.tagsEl = null;
           this.thumbs = new ThumbBudget();
           this.tv = null;
           this.tvMode = "unwatched";
           this.captionCache = /* @__PURE__ */ new Map();
           this.captionsLoaded = false;
           this.captionsLoading = null;
+          this.refreshT = null;
+          this.bar = new BottomBar(this);
           this.todayMMDD = browse2.todayMMDD(/* @__PURE__ */ new Date());
           guard(this, ["render", "renderGrid", "renderDetail"]);
         }
@@ -847,34 +1155,121 @@ var require_sifi = __commonJS({
             e.preventDefault();
             this.selectItem(visible[n]);
           });
+          this.watchVault();
+          this.registerEvent(
+            this.app.workspace.on("active-leaf-change", (leaf) => {
+              if (leaf === this.leaf) this.bar.mount();
+              else this.bar.unmount();
+            })
+          );
+          this.bar.mount();
         }
         async onClose() {
           if (this.tv) this.tv.teardown();
+          this.bar.unmount();
           this.thumbs.reset();
+          if (this.refreshT) clearTimeout(this.refreshT);
+          if (this.plugin.posters) this.plugin.posters.stop();
           if (typeof super.onClose === "function") await super.onClose();
+        }
+        // ---- live refresh: the runner writes, the library follows ----------------
+        itemsFolder() {
+          return String(this.plugin.settings.itemsFolder || "Media Log/Items").replace(/\/+$/, "") + "/";
+        }
+        watchVault() {
+          const inItems = (f) => !!(f && typeof f.path === "string" && f.path.startsWith(this.itemsFolder()));
+          const kick = (f) => {
+            if (inItems(f)) this.scheduleRefresh();
+          };
+          this.registerEvent(this.app.vault.on("create", kick));
+          this.registerEvent(this.app.vault.on("delete", kick));
+          this.registerEvent(
+            this.app.vault.on("rename", (f, oldPath) => {
+              if (inItems(f) || String(oldPath || "").startsWith(this.itemsFolder())) this.scheduleRefresh();
+            })
+          );
+          this.registerEvent(this.app.metadataCache.on("changed", kick));
+        }
+        scheduleRefresh() {
+          if (this.refreshT) clearTimeout(this.refreshT);
+          this.refreshT = setTimeout(() => {
+            this.refreshT = null;
+            if (this.plugin.posters && this.plugin.posters.running) return;
+            this.refreshItems();
+          }, REFRESH_DEBOUNCE_MS);
+        }
+        // Re-list items and repaint the grid in place: filters, page, selection, and
+        // scroll position survive. The detail pane is left alone so a playing video
+        // is not restarted by a frontmatter write.
+        async refreshItems() {
+          if (!this.gridEl || !this.gridEl.isConnected) return;
+          const items = await this.plugin.listItems();
+          const selectedId = this.selected && this.selected.id;
+          this.items = items;
+          this.captionsLoaded = false;
+          this.captionsLoading = null;
+          this.selected = selectedId ? items.find((i) => i.id === selectedId) || null : null;
+          const count = this.root && this.root.querySelector(".mlog__count");
+          if (count) count.textContent = `${items.length} items`;
+          withScrollKept(this.gridEl, () => this.renderGrid());
         }
         async render() {
           this.captionsLoaded = false;
           this.captionsLoading = null;
           this.toolsEl = null;
+          this.tagsEl = null;
           await super.render();
-          this.root.classList.toggle("mlog--portrait", !!this.plugin.settings.portraitCards);
           this.root.classList.add("mlog--sifi");
+          this.root.classList.toggle("mlog--portrait", !!this.plugin.settings.portraitCards);
+          this.root.classList.toggle("mlog--phone", isPhone());
           const body = this.gridEl && this.gridEl.parentElement;
           this.toolsEl = this.root.createDiv({ cls: "mlog__tools" });
-          if (body) this.root.insertBefore(this.toolsEl, body);
+          this.tagsEl = this.root.createDiv({ cls: "mlog__tags" });
+          if (body) {
+            this.root.insertBefore(this.toolsEl, body);
+            this.root.insertBefore(this.tagsEl, body);
+          }
           this.paintTools();
+          this.paintTags();
+          this.paintFilterCounts();
+          this.startPosters();
+        }
+        startPosters() {
+          if (!this.plugin.settings.posterFrames || isMobileApp(this.app)) return;
+          if (!this.plugin.posters) this.plugin.posters = new PosterFactory(this.plugin);
+          const posters = this.plugin.posters;
+          if (posters.running) return;
+          posters.run(this.items || [], {
+            onEach: (item) => this.refreshCardThumb(item),
+            onDone: (done) => {
+              if (done) this.scheduleRefresh();
+            }
+          });
+        }
+        refreshCardThumb(item) {
+          if (!this.gridEl || typeof CSS === "undefined" || !CSS.escape) return;
+          const thumb = this.gridEl.querySelector(`.mlog-card[data-id="${CSS.escape(item.id)}"] .mlog-card__thumb`);
+          if (!thumb || thumb._mlogImg) return;
+          const src = thumbSrc(this.app, item);
+          if (src) this.thumbs.bind(thumb, src, isPhone());
         }
         // Upstream's "Clear filters" rebuilds the filter object without the fork keys.
         normalizeFilter() {
           const f = this.filter;
           if (f.seed === void 0) f.seed = null;
           if (f.onDay === void 0) f.onDay = false;
+          if (!Array.isArray(f.tags)) f.tags = [];
+          if (f.untagged === void 0) f.untagged = false;
+          if (f.month === void 0) f.month = "";
+          if (!f.sort) f.sort = "newest";
           return f;
         }
-        // The one visible-list pipeline; upstream's detail nav and TV read it too.
+        listOpts() {
+          return { todayMMDD: this.todayMMDD, pageSize: this.pageSize() };
+        }
+        // The one visible-list pipeline; upstream's detail nav and the players read it too.
         filtered() {
-          return browse2.visibleList(this.items || [], this.normalizeFilter(), { todayMMDD: this.todayMMDD, pageSize: this.pageSize() });
+          return browse2.visibleList(this.items || [], this.normalizeFilter(), this.listOpts());
         }
         tvList(mode) {
           const base = this.filtered();
@@ -929,6 +1324,7 @@ var require_sifi = __commonJS({
             this.captionsLoading = null;
           });
         }
+        // ---- toolbar, tag chips, dropdown counts ---------------------------------
         paintTools() {
           const el = this.toolsEl;
           if (!el) return;
@@ -954,7 +1350,7 @@ var require_sifi = __commonJS({
               this.renderGrid();
             });
           }
-          const dayBase = browse2.visibleList(this.items || [], { ...f, onDay: false, seed: null }, { todayMMDD: this.todayMMDD });
+          const dayBase = browse2.visibleList(this.items || [], { ...f, onDay: false, seed: null }, this.listOpts());
           const odN = browse2.onThisDayItems(dayBase, this.todayMMDD).length;
           if (odN || f.onDay) {
             mk(`On this day \xB7 ${odN}`, !!f.onDay, () => {
@@ -962,11 +1358,92 @@ var require_sifi = __commonJS({
               this.renderGrid();
             });
           }
+          const sortSel = el.createEl("select", { cls: "mlog-tool mlog-tool--select", attr: { "aria-label": "Sort" } });
+          for (const s of browse2.SORTS) {
+            const o = sortSel.createEl("option", { value: s.key, text: s.label });
+            if (s.key === f.sort) o.selected = true;
+          }
+          sortSel.addEventListener("change", () => {
+            f.sort = sortSel.value;
+            this.renderGrid();
+          });
+          const months = browse2.monthOptions(this.items || []);
+          if (months.length > 1 || f.month) {
+            const monthSel = el.createEl("select", { cls: "mlog-tool mlog-tool--select", attr: { "aria-label": "Month" } });
+            monthSel.createEl("option", { value: "", text: "All months" });
+            for (const m of months) {
+              const o = monthSel.createEl("option", { value: m.key, text: `${m.label} (${m.n})` });
+              if (m.key === f.month) o.selected = true;
+            }
+            monthSel.addEventListener("change", () => {
+              f.month = monthSel.value;
+              this.renderGrid();
+            });
+          }
           if ((this.items || []).length) {
             mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
             mk("TV", false, () => this.openTv(), "TV mode");
           }
+          mk("Refresh", false, () => this.refreshItems(), "Re-read the items folder");
+          mk("Guide", false, () => this.app.workspace.openLinkText(String(this.plugin.settings.guideNote || SIFI_DEFAULTS.guideNote), "", false), "Open the Media guide");
         }
+        paintTags() {
+          const el = this.tagsEl;
+          if (!el) return;
+          el.empty();
+          const f = this.normalizeFilter();
+          const items = this.items || [];
+          const uni = browse2.tagUniverse(items);
+          if (!uni.length) {
+            el.classList.add("mlog__tags--empty");
+            return;
+          }
+          el.classList.remove("mlog__tags--empty");
+          const chip = (label, on, onClick) => {
+            const b = el.createEl("button", { cls: "mlog-tag" + (on ? " mlog-tag--on" : ""), text: label });
+            b.addEventListener("click", onClick);
+            return b;
+          };
+          for (const u of uni) {
+            const on = f.tags.includes(u.key);
+            chip(`${u.label} \xB7 ${u.n}`, on, () => {
+              f.tags = on ? f.tags.filter((k) => k !== u.key) : f.tags.concat([u.key]);
+              f.untagged = false;
+              this.renderGrid();
+            });
+          }
+          const un = browse2.untaggedCount(items);
+          if (un || f.untagged) {
+            chip(`Untagged \xB7 ${un}`, !!f.untagged, () => {
+              f.untagged = !f.untagged;
+              if (f.untagged) f.tags = [];
+              this.renderGrid();
+            });
+          }
+          if (f.tags.length || f.untagged) {
+            chip("Clear tags", false, () => {
+              f.tags = [];
+              f.untagged = false;
+              this.renderGrid();
+            });
+          }
+        }
+        // Live counts inside upstream's platform dropdown, computed within the other active filters.
+        paintFilterCounts() {
+          if (!this.root) return;
+          const sel = Array.from(this.root.querySelectorAll(".mlog__filters select")).find(
+            (s) => s.options && s.options[0] && /^All platforms/.test(s.options[0].text)
+          );
+          if (!sel) return;
+          const counts = browse2.platformCounts(this.items || [], this.normalizeFilter(), this.listOpts());
+          let total = 0;
+          for (const k of Object.keys(counts)) total += counts[k];
+          for (const o of Array.from(sel.options)) {
+            if (!o.value) o.text = `All platforms (${total})`;
+            else o.text = `${o.value} (${counts[o.value] || 0})`;
+          }
+        }
+        // ---- the grid ---------------------------------------------------------------
         renderGrid() {
           const grid = this.gridEl;
           if (!grid) return;
@@ -986,10 +1463,12 @@ var require_sifi = __commonJS({
               empty.createDiv({ cls: "mlog__empty-sub", text: 'Use "Add item" to save your first link.' });
             }
             this.paintTools();
+            this.paintTags();
+            this.paintFilterCounts();
             return;
           }
           const shuffled = this.filter.seed !== null;
-          const pg = shuffled ? { items: list, pageIdx: 0, totalPages: 1, total: list.length } : browse2.paginate(list, this.page, this.pageSize());
+          const pg = shuffled ? { items: list, pageIdx: 0, totalPages: 1, total: list.length, pageSize: list.length } : browse2.paginate(list, this.page, this.pageSize());
           this.page = pg.pageIdx;
           const header = (label, n) => {
             const h = grid.createDiv({ cls: "mlog__month" });
@@ -999,6 +1478,9 @@ var require_sifi = __commonJS({
           if (shuffled) {
             header("Shuffled", list.length);
             for (const item of pg.items) this.renderCard(grid, item);
+          } else if (this.filter.sort && this.filter.sort !== "newest" && this.filter.sort !== "oldest") {
+            header(browse2.SORTS.find((s) => s.key === this.filter.sort).label, pg.items.length);
+            for (const item of pg.items) this.renderCard(grid, item);
           } else {
             for (const g of browse2.groupByMonth(pg.items)) {
               header(g.label, g.items.length);
@@ -1007,12 +1489,14 @@ var require_sifi = __commonJS({
           }
           this.renderPager(grid, pg);
           this.paintTools();
+          this.paintTags();
+          this.paintFilterCounts();
         }
         renderCard(grid, item) {
           const selected = this.selected && this.selected.id === item.id;
           const card = grid.createDiv({
             cls: selected ? "mlog-card mlog-card--selected" : "mlog-card",
-            attr: { role: "button", tabindex: "0" }
+            attr: { role: "button", tabindex: "0", "data-id": item.id }
           });
           const thumb = card.createDiv({ cls: "mlog-card__thumb" });
           thumb.createDiv({ cls: "mlog-card__placeholder", text: item.kind && item.kind !== "link" ? item.kind : item.platform });
@@ -1046,13 +1530,17 @@ var require_sifi = __commonJS({
             this.renderGrid();
             if (this.gridEl && this.gridEl.scrollIntoView) this.gridEl.scrollIntoView({ block: "start", behavior: "smooth" });
           };
-          const prev = bar.createEl("button", { text: "Previous" });
-          prev.disabled = pg.pageIdx <= 0;
-          prev.addEventListener("click", () => go(pg.pageIdx - 1));
-          bar.createSpan({ text: `Page ${pg.pageIdx + 1} of ${pg.totalPages} \xB7 ${pg.total} items` });
-          const next = bar.createEl("button", { text: "Next" });
-          next.disabled = pg.pageIdx >= pg.totalPages - 1;
-          next.addEventListener("click", () => go(pg.pageIdx + 1));
+          const btn = (label, disabled, idx, aria) => {
+            const b = bar.createEl("button", { text: label, attr: aria ? { "aria-label": aria } : {} });
+            b.disabled = disabled;
+            b.addEventListener("click", () => go(idx));
+            return b;
+          };
+          btn("\xAB", pg.pageIdx <= 0, 0, "First page");
+          btn("Previous", pg.pageIdx <= 0, pg.pageIdx - 1);
+          bar.createSpan({ text: `Page ${pg.pageIdx + 1} of ${pg.totalPages} \xB7 ${browse2.rangeLabel(pg)}` });
+          btn("Next", pg.pageIdx >= pg.totalPages - 1, pg.pageIdx + 1);
+          btn("\xBB", pg.pageIdx >= pg.totalPages - 1, pg.totalPages - 1, "Last page");
         }
         // Detail pane: autoplaying, looping, sized for the item's shape.
         renderMedia(container, item) {
@@ -1101,6 +1589,24 @@ var require_sifi = __commonJS({
               await this.plugin.saveSettings();
             })
           );
+          new Setting2(c).setName("Poster frames").setDesc("On desktop, grab a frame from each local video that has no screenshot and use it as the thumbnail.").addToggle(
+            (t) => t.setValue(!!s.posterFrames).onChange(async (v) => {
+              s.posterFrames = v;
+              await this.plugin.saveSettings();
+            })
+          );
+          new Setting2(c).setName("Bottom bar on phones").setDesc("Show the Select bottom bar inside the library on a phone (hidden while a player is open).").addToggle(
+            (t) => t.setValue(!!s.bottomBar).onChange(async (v) => {
+              s.bottomBar = v;
+              await this.plugin.saveSettings();
+            })
+          );
+          new Setting2(c).setName("Guide note").setDesc("Vault note the Guide button opens.").addText(
+            (t) => t.setValue(String(s.guideNote)).onChange(async (v) => {
+              s.guideNote = v.trim() || SIFI_DEFAULTS.guideNote;
+              await this.plugin.saveSettings();
+            })
+          );
           new Setting2(c).setName("Duplicate-scan log").setDesc("Note that records every item the duplicate scan trashes.").addText(
             (t) => t.setValue(String(s.quarantineLog)).onChange(async (v) => {
               s.quarantineLog = v.trim() || SIFI_DEFAULTS.quarantineLog;
@@ -1115,14 +1621,17 @@ var require_sifi = __commonJS({
         ScanModal,
         TvPlayer,
         ThumbBudget,
+        BottomBar,
+        PosterFactory,
         buildMedia,
         loadCaptions,
         keepOne,
         thumbSrc,
+        BOTTOM_BAR_TABS,
         SIFI_DEFAULTS
       };
     }
-    module2.exports = { build, SIFI_DEFAULTS };
+    module2.exports = { build, SIFI_DEFAULTS, BOTTOM_BAR_TABS };
   }
 });
 

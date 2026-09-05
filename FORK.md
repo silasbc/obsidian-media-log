@@ -24,7 +24,10 @@ Ported from the old Media Library surface (shipped there 2026-08-07/08), now on 
 3. **Reel player polish.** The detail pane autoplays and loops local video, hints autoplay to embeds, sizes 9:16 for reels and posts, and falls back to the runner's `preview_remote` image when no vault screenshot exists. Left/Right arrows step through the visible set.
 4. **Paging at 64 with month headers.** The grid pages instead of stopping at 200. Any filter change lands back on page 1. On phones, thumbnails exist only near the viewport with about 24 live at once and recycle on scroll. A render error shows a card with the message and a Reload button instead of a blank view.
 5. **TV mode.** Full-screen playback of the current filters, unwatched first, looping. Local videos advance when they end; embeds advance on a dwell timer (15/30/60s pills, default from settings). Prev/Next/Star/Watched controls fade after a moment; Escape closes, arrows step. Three seconds on an item marks it watched.
-6. **Phone pop-up player.** On a phone, tapping a card opens the item in the same full-screen player instead of scrolling to the detail pane above the grid. It opens synchronously inside the tap, so iOS allows playback with sound; the reel loops until auto-advance is switched on; Prev/Next stop at the list's edges; a scrim tap closes; and the grid keeps its scroll position. Open source and Open note sit in the second row.
+6. **Sort, month, tags, counts, pager.** Sort picker and month filter in the toolbar; tag chips (AND) with an Untagged chip above the grid once anything is tagged; live counts in the platform dropdown; First/Last and a range badge under the grid.
+7. **Live refresh + poster frames.** The view watches the items folder and repaints in place (scroll, page, and selection kept); a Refresh button re-reads on demand. On desktop the plugin grabs one frame from every local video that has no screenshot and writes it as the screenshot asset, so reels get real thumbnails without the runner.
+8. **Guide button and phone bottom bar.** Guide opens the vault's Media guide (setting). On phones the Select bottom bar (Home, Train, Health, Media, Mauston) mounts inside the library and hides while a player is open.
+9. **Phone pop-up player.** On a phone, tapping a card opens the item in the same full-screen player instead of scrolling to the detail pane above the grid. It opens synchronously inside the tap, so iOS allows playback with sound; the reel loops until auto-advance is switched on; Prev/Next stop at the list's edges; a scrim tap closes; and the grid keeps its scroll position. Open source and Open note sit in the second row.
 
 Settings under "Sifi's edition": items per page, portrait cards, TV dwell seconds, and the duplicate-scan log path.
 
@@ -37,6 +40,14 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 - Deploy = copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/media-log/` and restart Obsidian (or toggle the plugin off and on).
 
 ## Changelog (Sifi's edition)
+
+### 1.4.0-sifi.3 — 2026-09-05
+
+- Sort control (newest, oldest, title, creator, unwatched first), month filter, tag chips with AND and an Untagged chip, live platform counts in the dropdown.
+- Pager: First/Last and a range badge.
+- The library re-reads itself when the items folder changes (debounced, scroll and selection kept) plus a Refresh button.
+- Poster frames: on desktop, one frame from each local video without a screenshot is written as the item's screenshot asset — real thumbnails without the runner.
+- Guide button (setting: guide note) and a Select bottom bar inside the view on phones, hidden while a player is open.
 
 ### 1.4.0-sifi.2 — 2026-09-04
 

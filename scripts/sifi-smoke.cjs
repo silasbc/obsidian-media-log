@@ -109,6 +109,10 @@ const app = {
   assert.equal(plugin.settings.pageSize, 64, "fork defaults are merged into settings");
   assert.equal(plugin.settings.portraitCards, true);
   assert.equal(plugin.settings.itemsFolder, "Media Log/Items", "upstream defaults survive");
+  assert.equal(plugin.settings.guideNote, "Select/Guide/Media");
+  assert.equal(plugin.settings.posterFrames, true);
+  assert.equal(plugin.settings.bottomBar, true);
+  assert.equal(MediaLogPlugin.sifi.BOTTOM_BAR_TABS.map((t) => t.label).join(","), "Home,Train,Health,Media,Mauston", "bottom bar mirrors tab bar v6");
 
   const items = await plugin.listItems();
   assert.equal(items.length, 3);

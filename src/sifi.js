@@ -6,13 +6,18 @@
 //
 // What this adds on top of upstream's library:
 //   - Random <page>, On this day, and search that also covers caption text
-//   - paging at <page> items with month headers (no more "showing 200 of N")
+//   - sort control, month filter, tag chips (AND) with an Untagged chip,
+//     platform counts in the dropdown
+//   - paging at <page> items with month headers, First/Last and a range badge
+//   - the library re-reads itself when the runner writes, plus a Refresh button
+//   - poster-frame thumbnails generated from local reels (no runner needed)
 //   - phone image discipline: thumbnails only near the viewport, ~24 live
 //   - an error card instead of a blank view when a render throws
 //   - autoplaying detail player sized 9:16 for reels, remote-preview fallback
 //   - TV mode: full-screen loop through the current filters, auto-advance
 //   - phone pop-up player: a tap opens the item full-screen inside the tap itself
-//   - duplicate scan with keep-one and a quarantine log
+//   - a bottom bar inside the view on phones, hidden while a player is open
+//   - Guide button, duplicate scan with keep-one and a quarantine log
 "use strict";
 
 const { Modal, Notice, Setting, setIcon } = require("obsidian");
@@ -23,11 +28,29 @@ const SIFI_DEFAULTS = {
   portraitCards: true,
   tvDwellSecs: 20,
   quarantineLog: "Media Log/Deleted Media.md",
+  guideNote: "Select/Guide/Media",
+  posterFrames: true,
+  bottomBar: true,
 };
 const THUMB_LIVE_MAX = 24;
 const WATCH_DWELL_MS = 3000;
 const TICK_MS = 500;
 const CONTROLS_FADE_MS = 2500;
+const REFRESH_DEBOUNCE_MS = 900;
+const POSTER_MAX_WIDTH = 540;
+const POSTER_TIMEOUT_MS = 12000;
+
+// The shared Select bottom bar's tabs (staging/lib/tabbar-snippet.js v6), so
+// the plugin view on a phone offers the same doors as every note surface.
+const BOTTOM_BAR_TABS = [
+  { label: "Home", link: "Home", icon: "<path d='M3 10.5 12 3l9 7.5'/><path d='M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5'/>" },
+  { label: "Train", link: "Dashboard", icon: "<path d='M8 12h8'/><rect x='4' y='7.5' width='3' height='9' rx='1'/><rect x='17' y='7.5' width='3' height='9' rx='1'/><path d='M2 10.5v3'/><path d='M22 10.5v3'/>" },
+  { label: "Health", link: "Health Dashboard", icon: "<path d='M12 20.5 4.6 13a5 5 0 0 1 7-7.1l.4.4.4-.4a5 5 0 0 1 7 7.1z'/>" },
+  { label: "Media", link: "Media Library", icon: "<rect x='3' y='5' width='18' height='14' rx='2'/><path d='m10 9.2 4.6 2.8-4.6 2.8z'/>" },
+  { label: "Mauston", link: "Mauston/Mauston", icon: "<path d='M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z'/><path d='M9 4v14'/><path d='M15 6v14'/>" },
+];
+const svgIcon = (p) =>
+  "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>" + p + "</svg>";
 
 function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelectionWithin }) {
   // Fork settings ride along with upstream's defaults; loadSettings spreads them.
@@ -36,6 +59,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
   const textSelected = typeof hasTextSelectionWithin === "function" ? hasTextSelectionWithin : () => false;
   const isPhone = () =>
     typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches;
+  const isMobileApp = (app) => !!(app && app.isMobile);
 
   // A render that throws renders words, never a blank view.
   function guard(view, names) {
@@ -59,6 +83,19 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     const shot = item.screenshot && app.vault.getAbstractFileByPath(item.screenshot);
     if (shot) return app.vault.getResourcePath(shot);
     return item.previewRemote || "";
+  }
+
+  // Re-render inside the nearest scrolling ancestor without losing its scroll position.
+  function withScrollKept(el, fn) {
+    let scroller = el;
+    while (scroller && scroller !== document.body) {
+      const cs = getComputedStyle(scroller);
+      if (/(auto|scroll)/.test(cs.overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
+      scroller = scroller.parentElement;
+    }
+    const top = scroller ? scroller.scrollTop : 0;
+    fn();
+    if (scroller) scroller.scrollTop = top;
   }
 
   // ---- thumbnails: a live-image budget on phones ----------------------------
@@ -156,7 +193,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     );
   }
 
-  // ---- the media element, shared by the detail pane and TV -------------------
+  // ---- the media element, shared by the detail pane and the players -----------
   // Local video → embed → image (vault screenshot or remote preview) → placeholder.
   function buildMedia(app, container, item, opts) {
     const o = opts || {};
@@ -206,6 +243,147 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
     const ph = container.createDiv({ cls: cls + " mlog-detail__media--empty", text: item.platform || "No media" });
     return { kind: "none", el: ph };
+  }
+
+  // ---- poster frames: real thumbnails from the local reels --------------------
+  // The runner's remote preview for a login-walled reel is Instagram's generic
+  // logo. When a local video exists and no screenshot does, grab one frame,
+  // write it as the plugin's own screenshot asset, and set the field. Runs on
+  // desktop only, one video at a time, and never touches items that already
+  // have a screenshot.
+  class PosterFactory {
+    constructor(plugin) {
+      this.plugin = plugin;
+      this.app = plugin.app;
+      this.running = false;
+      this.done = 0;
+      this.failed = 0;
+    }
+
+    candidates(items) {
+      const vault = this.app.vault;
+      return browse.posterCandidates(
+        items,
+        (it) => !!vault.getAbstractFileByPath(it.video),
+        (it) => !!vault.getAbstractFileByPath(it.screenshot)
+      );
+    }
+
+    async run(items, hooks) {
+      if (this.running) return;
+      const list = this.candidates(items);
+      if (!list.length) return;
+      const h = hooks || {};
+      this.running = true;
+      this.done = 0;
+      this.failed = 0;
+      try {
+        for (const item of list) {
+          if (!this.running) break;
+          try {
+            if (await this.makePoster(item)) {
+              this.done++;
+              if (h.onEach) h.onEach(item);
+            } else {
+              this.failed++;
+            }
+          } catch {
+            this.failed++;
+          }
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        if (this.done) new Notice(`Media Log: ${this.done} poster frame${this.done === 1 ? "" : "s"} written${this.failed ? `, ${this.failed} skipped` : ""}`);
+      } finally {
+        this.running = false;
+        if (h.onDone) h.onDone(this.done, this.failed);
+      }
+    }
+
+    stop() {
+      this.running = false;
+    }
+
+    async makePoster(item) {
+      const vault = this.app.vault;
+      const file = vault.getAbstractFileByPath(item.video);
+      if (!file) return false;
+      const dest = browse.posterPath(item, this.plugin.settings.assetsFolder);
+      if (!vault.getAbstractFileByPath(dest)) {
+        // A blob URL is same-origin, so the canvas is never tainted.
+        const bytes = await vault.readBinary(file);
+        const url = URL.createObjectURL(new Blob([bytes], { type: "video/mp4" }));
+        let blob = null;
+        try {
+          blob = await this.frameOf(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        if (!blob) return false;
+        await this.plugin.ensureFolder(String(this.plugin.settings.assetsFolder));
+        await vault.createBinary(dest, await blob.arrayBuffer());
+      }
+      await this.app.fileManager.processFrontMatter(item.file, (fm) => {
+        fm.screenshot = dest;
+      });
+      item.screenshot = dest;
+      return true;
+    }
+
+    frameOf(src) {
+      return new Promise((resolve) => {
+        const video = document.createElement("video");
+        let settled = false;
+        const cleanup = () => {
+          clearTimeout(timer);
+          try {
+            video.pause();
+            video.removeAttribute("src");
+            video.load();
+          } catch {}
+          video.remove();
+        };
+        const finish = (v) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(v);
+        };
+        const timer = setTimeout(() => finish(null), POSTER_TIMEOUT_MS);
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.addEventListener("error", () => finish(null));
+        video.addEventListener("loadedmetadata", () => {
+          const d = Number.isFinite(video.duration) ? video.duration : 2;
+          try {
+            video.currentTime = Math.min(1, Math.max(0.1, d * 0.1));
+          } catch {
+            finish(null);
+          }
+        });
+        video.addEventListener("seeked", () => {
+          try {
+            const w = video.videoWidth;
+            const hgt = video.videoHeight;
+            if (!w || !hgt) {
+              finish(null);
+              return;
+            }
+            const scale = Math.min(1, POSTER_MAX_WIDTH / w);
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.round(w * scale);
+            canvas.height = Math.round(hgt * scale);
+            canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((blob) => finish(blob || null), "image/jpeg", 0.82);
+          } catch {
+            finish(null);
+          }
+        });
+        video.style.cssText = "position:fixed;left:-9999px;top:0;width:10px;height:10px;opacity:0;pointer-events:none;";
+        document.body.appendChild(video);
+        video.src = src;
+      });
+    }
   }
 
   // ---- duplicate scan: keep one, trash the rest, log it ----------------------
@@ -327,22 +505,10 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
   }
 
-  // Re-render inside the nearest scrolling ancestor without losing its scroll position.
-  function withScrollKept(el, fn) {
-    let scroller = el;
-    while (scroller && scroller !== document.body) {
-      const cs = getComputedStyle(scroller);
-      if (/(auto|scroll)/.test(cs.overflowY) && scroller.scrollHeight > scroller.clientHeight) break;
-      scroller = scroller.parentElement;
-    }
-    const top = scroller ? scroller.scrollTop : 0;
-    fn();
-    if (scroller) scroller.scrollTop = top;
-  }
-
-  // ---- TV mode: full-screen, loops the current filters, auto-advances --------
+  // ---- the player: TV mode and the phone pop-up --------------------------------
   // Mounted on document.body: Obsidian 1.13 applies contain:strict to leaves,
-  // which hijacks position:fixed inside a view.
+  // which hijacks position:fixed inside a view. "tv" loops the current
+  // filters and auto-advances; "modal" is the phone's pop-up for one tapped item.
   class TvPlayer {
     constructor(view, list, idx, opts) {
       this.view = view;
@@ -350,7 +516,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.app = view.app;
       this.list = list;
       this.idx = idx;
-      this.mode = (opts && opts.mode) || "tv"; // "tv" loops and auto-advances; "modal" is the phone's pop-up player
+      this.mode = (opts && opts.mode) || "tv";
       this.modal = this.mode === "modal";
       this.auto = !this.modal;
       this.loop = !this.modal;
@@ -385,6 +551,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         else if (e.key === "ArrowLeft") this.step(-1);
       };
       document.addEventListener("keydown", this.keydown);
+      if (this.view.bar) this.view.bar.hide(true);
       this.show(this.idx);
     }
 
@@ -583,6 +750,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       if (this.overlay) this.overlay.remove();
       this.overlay = this.panel = this.ctl = null;
       if (this.view.tv === this) this.view.tv = null;
+      if (this.view.bar) this.view.bar.hide(false);
     }
 
     close() {
@@ -596,20 +764,76 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
   }
 
+  // ---- the phone bottom bar --------------------------------------------------
+  // The note surfaces carry the shared Select tab bar; the plugin view had no
+  // bar at all. On a phone this mounts the same five doors on document.body
+  // (outside any transformed ancestor, the v4 lesson) while the library is the
+  // active leaf, and hides itself while a player is open.
+  class BottomBar {
+    constructor(view) {
+      this.view = view;
+      this.el = null;
+      this.timer = null;
+    }
+
+    wanted() {
+      return !!this.view.plugin.settings.bottomBar && (isMobileApp(this.view.app) || isPhone());
+    }
+
+    visible() {
+      const c = this.view.containerEl;
+      return !!(c && c.isConnected && c.getClientRects().length);
+    }
+
+    mount() {
+      if (this.el || !this.wanted() || !this.visible()) return;
+      const el = document.body.createDiv({ cls: "mlog-bar" });
+      for (const t of BOTTOM_BAR_TABS) {
+        const on = t.label === "Media";
+        const b = el.createEl("button", { cls: "mlog-bar__slot" + (on ? " mlog-bar__slot--on" : ""), attr: { "aria-label": t.label } });
+        b.createDiv({ cls: "mlog-bar__icon" }).innerHTML = svgIcon(t.icon);
+        b.createDiv({ cls: "mlog-bar__label", text: t.label });
+        b.addEventListener("click", () => {
+          if (!on) this.view.app.workspace.openLinkText(t.link, "", false);
+        });
+      }
+      this.el = el;
+      if (this.view.root) this.view.root.classList.add("mlog--barred");
+      this.timer = setInterval(() => {
+        if (!this.visible()) this.unmount(); // the library left the screen — a body-mounted bar must not outlive it
+      }, 1000);
+    }
+
+    hide(h) {
+      if (this.el) this.el.classList.toggle("mlog-bar--hidden", !!h);
+    }
+
+    unmount() {
+      if (this.timer) clearInterval(this.timer);
+      this.timer = null;
+      if (this.el) this.el.remove();
+      this.el = null;
+      if (this.view.root) this.view.root.classList.remove("mlog--barred");
+    }
+  }
+
   // ---- the library view --------------------------------------------------------
   class SifiLibraryView extends LibraryView {
     constructor(leaf, plugin) {
       super(leaf, plugin);
-      Object.assign(this.filter, { onDay: false, seed: null });
+      Object.assign(this.filter, { onDay: false, seed: null, tags: [], untagged: false, month: "", sort: "newest" });
       this.page = 0;
       this.lastKey = "";
       this.toolsEl = null;
+      this.tagsEl = null;
       this.thumbs = new ThumbBudget();
       this.tv = null;
       this.tvMode = "unwatched"; // TV binges the unwatched by default; falls back to all when everything's seen
       this.captionCache = new Map();
       this.captionsLoaded = false;
       this.captionsLoading = null;
+      this.refreshT = null;
+      this.bar = new BottomBar(this);
       this.todayMMDD = browse.todayMMDD(new Date());
       guard(this, ["render", "renderGrid", "renderDetail"]);
     }
@@ -634,25 +858,111 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         e.preventDefault();
         this.selectItem(visible[n]);
       });
+      this.watchVault();
+      this.registerEvent(
+        this.app.workspace.on("active-leaf-change", (leaf) => {
+          if (leaf === this.leaf) this.bar.mount();
+          else this.bar.unmount();
+        })
+      );
+      this.bar.mount();
     }
 
     async onClose() {
       if (this.tv) this.tv.teardown();
+      this.bar.unmount();
       this.thumbs.reset();
+      if (this.refreshT) clearTimeout(this.refreshT);
+      if (this.plugin.posters) this.plugin.posters.stop();
       if (typeof super.onClose === "function") await super.onClose();
+    }
+
+    // ---- live refresh: the runner writes, the library follows ----------------
+    itemsFolder() {
+      return String(this.plugin.settings.itemsFolder || "Media Log/Items").replace(/\/+$/, "") + "/";
+    }
+
+    watchVault() {
+      const inItems = (f) => !!(f && typeof f.path === "string" && f.path.startsWith(this.itemsFolder()));
+      const kick = (f) => {
+        if (inItems(f)) this.scheduleRefresh();
+      };
+      this.registerEvent(this.app.vault.on("create", kick));
+      this.registerEvent(this.app.vault.on("delete", kick));
+      this.registerEvent(
+        this.app.vault.on("rename", (f, oldPath) => {
+          if (inItems(f) || String(oldPath || "").startsWith(this.itemsFolder())) this.scheduleRefresh();
+        })
+      );
+      this.registerEvent(this.app.metadataCache.on("changed", kick));
+    }
+
+    scheduleRefresh() {
+      if (this.refreshT) clearTimeout(this.refreshT);
+      this.refreshT = setTimeout(() => {
+        this.refreshT = null;
+        if (this.plugin.posters && this.plugin.posters.running) return; // one refresh when the poster run ends
+        this.refreshItems();
+      }, REFRESH_DEBOUNCE_MS);
+    }
+
+    // Re-list items and repaint the grid in place: filters, page, selection, and
+    // scroll position survive. The detail pane is left alone so a playing video
+    // is not restarted by a frontmatter write.
+    async refreshItems() {
+      if (!this.gridEl || !this.gridEl.isConnected) return;
+      const items = await this.plugin.listItems();
+      const selectedId = this.selected && this.selected.id;
+      this.items = items;
+      this.captionsLoaded = false;
+      this.captionsLoading = null;
+      this.selected = selectedId ? items.find((i) => i.id === selectedId) || null : null;
+      const count = this.root && this.root.querySelector(".mlog__count");
+      if (count) count.textContent = `${items.length} items`; // upstream's header count, kept honest
+      withScrollKept(this.gridEl, () => this.renderGrid());
     }
 
     async render() {
       this.captionsLoaded = false;
       this.captionsLoading = null;
       this.toolsEl = null;
+      this.tagsEl = null;
       await super.render();
-      this.root.classList.toggle("mlog--portrait", !!this.plugin.settings.portraitCards);
       this.root.classList.add("mlog--sifi");
+      this.root.classList.toggle("mlog--portrait", !!this.plugin.settings.portraitCards);
+      this.root.classList.toggle("mlog--phone", isPhone());
       const body = this.gridEl && this.gridEl.parentElement;
       this.toolsEl = this.root.createDiv({ cls: "mlog__tools" });
-      if (body) this.root.insertBefore(this.toolsEl, body);
+      this.tagsEl = this.root.createDiv({ cls: "mlog__tags" });
+      if (body) {
+        this.root.insertBefore(this.toolsEl, body);
+        this.root.insertBefore(this.tagsEl, body);
+      }
       this.paintTools();
+      this.paintTags();
+      this.paintFilterCounts();
+      this.startPosters();
+    }
+
+    startPosters() {
+      if (!this.plugin.settings.posterFrames || isMobileApp(this.app)) return;
+      if (!this.plugin.posters) this.plugin.posters = new PosterFactory(this.plugin);
+      const posters = this.plugin.posters;
+      if (posters.running) return;
+      posters.run(this.items || [], {
+        onEach: (item) => this.refreshCardThumb(item),
+        onDone: (done) => {
+          if (done) this.scheduleRefresh();
+        },
+      });
+    }
+
+    refreshCardThumb(item) {
+      if (!this.gridEl || typeof CSS === "undefined" || !CSS.escape) return;
+      const thumb = this.gridEl.querySelector(`.mlog-card[data-id="${CSS.escape(item.id)}"] .mlog-card__thumb`);
+      if (!thumb || thumb._mlogImg) return;
+      const src = thumbSrc(this.app, item);
+      if (src) this.thumbs.bind(thumb, src, isPhone());
     }
 
     // Upstream's "Clear filters" rebuilds the filter object without the fork keys.
@@ -660,12 +970,20 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       const f = this.filter;
       if (f.seed === undefined) f.seed = null;
       if (f.onDay === undefined) f.onDay = false;
+      if (!Array.isArray(f.tags)) f.tags = [];
+      if (f.untagged === undefined) f.untagged = false;
+      if (f.month === undefined) f.month = "";
+      if (!f.sort) f.sort = "newest";
       return f;
     }
 
-    // The one visible-list pipeline; upstream's detail nav and TV read it too.
+    listOpts() {
+      return { todayMMDD: this.todayMMDD, pageSize: this.pageSize() };
+    }
+
+    // The one visible-list pipeline; upstream's detail nav and the players read it too.
     filtered() {
-      return browse.visibleList(this.items || [], this.normalizeFilter(), { todayMMDD: this.todayMMDD, pageSize: this.pageSize() });
+      return browse.visibleList(this.items || [], this.normalizeFilter(), this.listOpts());
     }
 
     tvList(mode) {
@@ -728,6 +1046,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         });
     }
 
+    // ---- toolbar, tag chips, dropdown counts ---------------------------------
     paintTools() {
       const el = this.toolsEl;
       if (!el) return;
@@ -753,7 +1072,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           this.renderGrid();
         });
       }
-      const dayBase = browse.visibleList(this.items || [], { ...f, onDay: false, seed: null }, { todayMMDD: this.todayMMDD });
+      const dayBase = browse.visibleList(this.items || [], { ...f, onDay: false, seed: null }, this.listOpts());
       const odN = browse.onThisDayItems(dayBase, this.todayMMDD).length;
       if (odN || f.onDay) {
         // hidden at zero, kept visible while active so it can be untoggled
@@ -762,12 +1081,97 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           this.renderGrid();
         });
       }
+      // Sort
+      const sortSel = el.createEl("select", { cls: "mlog-tool mlog-tool--select", attr: { "aria-label": "Sort" } });
+      for (const s of browse.SORTS) {
+        const o = sortSel.createEl("option", { value: s.key, text: s.label });
+        if (s.key === f.sort) o.selected = true;
+      }
+      sortSel.addEventListener("change", () => {
+        f.sort = sortSel.value;
+        this.renderGrid();
+      });
+      // Month
+      const months = browse.monthOptions(this.items || []);
+      if (months.length > 1 || f.month) {
+        const monthSel = el.createEl("select", { cls: "mlog-tool mlog-tool--select", attr: { "aria-label": "Month" } });
+        monthSel.createEl("option", { value: "", text: "All months" });
+        for (const m of months) {
+          const o = monthSel.createEl("option", { value: m.key, text: `${m.label} (${m.n})` });
+          if (m.key === f.month) o.selected = true;
+        }
+        monthSel.addEventListener("change", () => {
+          f.month = monthSel.value;
+          this.renderGrid();
+        });
+      }
       if ((this.items || []).length) {
         mk("Scan", false, () => new ScanModal(this.app, this.plugin, this).open(), "Duplicate scan");
         mk("TV", false, () => this.openTv(), "TV mode");
       }
+      mk("Refresh", false, () => this.refreshItems(), "Re-read the items folder");
+      mk("Guide", false, () => this.app.workspace.openLinkText(String(this.plugin.settings.guideNote || SIFI_DEFAULTS.guideNote), "", false), "Open the Media guide");
     }
 
+    paintTags() {
+      const el = this.tagsEl;
+      if (!el) return;
+      el.empty();
+      const f = this.normalizeFilter();
+      const items = this.items || [];
+      const uni = browse.tagUniverse(items);
+      if (!uni.length) {
+        el.classList.add("mlog__tags--empty");
+        return; // nothing is tagged yet: no chips, no Untagged
+      }
+      el.classList.remove("mlog__tags--empty");
+      const chip = (label, on, onClick) => {
+        const b = el.createEl("button", { cls: "mlog-tag" + (on ? " mlog-tag--on" : ""), text: label });
+        b.addEventListener("click", onClick);
+        return b;
+      };
+      for (const u of uni) {
+        const on = f.tags.includes(u.key);
+        chip(`${u.label} · ${u.n}`, on, () => {
+          f.tags = on ? f.tags.filter((k) => k !== u.key) : f.tags.concat([u.key]);
+          f.untagged = false;
+          this.renderGrid();
+        });
+      }
+      const un = browse.untaggedCount(items);
+      if (un || f.untagged) {
+        chip(`Untagged · ${un}`, !!f.untagged, () => {
+          f.untagged = !f.untagged;
+          if (f.untagged) f.tags = [];
+          this.renderGrid();
+        });
+      }
+      if (f.tags.length || f.untagged) {
+        chip("Clear tags", false, () => {
+          f.tags = [];
+          f.untagged = false;
+          this.renderGrid();
+        });
+      }
+    }
+
+    // Live counts inside upstream's platform dropdown, computed within the other active filters.
+    paintFilterCounts() {
+      if (!this.root) return;
+      const sel = Array.from(this.root.querySelectorAll(".mlog__filters select")).find(
+        (s) => s.options && s.options[0] && /^All platforms/.test(s.options[0].text)
+      );
+      if (!sel) return;
+      const counts = browse.platformCounts(this.items || [], this.normalizeFilter(), this.listOpts());
+      let total = 0;
+      for (const k of Object.keys(counts)) total += counts[k];
+      for (const o of Array.from(sel.options)) {
+        if (!o.value) o.text = `All platforms (${total})`;
+        else o.text = `${o.value} (${counts[o.value] || 0})`;
+      }
+    }
+
+    // ---- the grid ---------------------------------------------------------------
     renderGrid() {
       const grid = this.gridEl;
       if (!grid) return;
@@ -787,11 +1191,13 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           empty.createDiv({ cls: "mlog__empty-sub", text: 'Use "Add item" to save your first link.' });
         }
         this.paintTools();
+        this.paintTags();
+        this.paintFilterCounts();
         return;
       }
       const shuffled = this.filter.seed !== null;
       const pg = shuffled
-        ? { items: list, pageIdx: 0, totalPages: 1, total: list.length } // a deal is already one page, dealt order
+        ? { items: list, pageIdx: 0, totalPages: 1, total: list.length, pageSize: list.length } // a deal is already one page, dealt order
         : browse.paginate(list, this.page, this.pageSize());
       this.page = pg.pageIdx;
       const header = (label, n) => {
@@ -802,6 +1208,9 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       if (shuffled) {
         header("Shuffled", list.length);
         for (const item of pg.items) this.renderCard(grid, item);
+      } else if (this.filter.sort && this.filter.sort !== "newest" && this.filter.sort !== "oldest") {
+        header(browse.SORTS.find((s) => s.key === this.filter.sort).label, pg.items.length);
+        for (const item of pg.items) this.renderCard(grid, item);
       } else {
         for (const g of browse.groupByMonth(pg.items)) {
           header(g.label, g.items.length);
@@ -810,13 +1219,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       }
       this.renderPager(grid, pg);
       this.paintTools();
+      this.paintTags();
+      this.paintFilterCounts();
     }
 
     renderCard(grid, item) {
       const selected = this.selected && this.selected.id === item.id;
       const card = grid.createDiv({
         cls: selected ? "mlog-card mlog-card--selected" : "mlog-card",
-        attr: { role: "button", tabindex: "0" },
+        attr: { role: "button", tabindex: "0", "data-id": item.id },
       });
       const thumb = card.createDiv({ cls: "mlog-card__thumb" });
       thumb.createDiv({ cls: "mlog-card__placeholder", text: item.kind && item.kind !== "link" ? item.kind : item.platform });
@@ -851,13 +1262,17 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         this.renderGrid();
         if (this.gridEl && this.gridEl.scrollIntoView) this.gridEl.scrollIntoView({ block: "start", behavior: "smooth" });
       };
-      const prev = bar.createEl("button", { text: "Previous" });
-      prev.disabled = pg.pageIdx <= 0;
-      prev.addEventListener("click", () => go(pg.pageIdx - 1));
-      bar.createSpan({ text: `Page ${pg.pageIdx + 1} of ${pg.totalPages} · ${pg.total} items` });
-      const next = bar.createEl("button", { text: "Next" });
-      next.disabled = pg.pageIdx >= pg.totalPages - 1;
-      next.addEventListener("click", () => go(pg.pageIdx + 1));
+      const btn = (label, disabled, idx, aria) => {
+        const b = bar.createEl("button", { text: label, attr: aria ? { "aria-label": aria } : {} });
+        b.disabled = disabled;
+        b.addEventListener("click", () => go(idx));
+        return b;
+      };
+      btn("«", pg.pageIdx <= 0, 0, "First page");
+      btn("Previous", pg.pageIdx <= 0, pg.pageIdx - 1);
+      bar.createSpan({ text: `Page ${pg.pageIdx + 1} of ${pg.totalPages} · ${browse.rangeLabel(pg)}` });
+      btn("Next", pg.pageIdx >= pg.totalPages - 1, pg.pageIdx + 1);
+      btn("»", pg.pageIdx >= pg.totalPages - 1, pg.totalPages - 1, "Last page");
     }
 
     // Detail pane: autoplaying, looping, sized for the item's shape.
@@ -920,6 +1335,33 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           })
         );
       new Setting(c)
+        .setName("Poster frames")
+        .setDesc("On desktop, grab a frame from each local video that has no screenshot and use it as the thumbnail.")
+        .addToggle((t) =>
+          t.setValue(!!s.posterFrames).onChange(async (v) => {
+            s.posterFrames = v;
+            await this.plugin.saveSettings();
+          })
+        );
+      new Setting(c)
+        .setName("Bottom bar on phones")
+        .setDesc("Show the Select bottom bar inside the library on a phone (hidden while a player is open).")
+        .addToggle((t) =>
+          t.setValue(!!s.bottomBar).onChange(async (v) => {
+            s.bottomBar = v;
+            await this.plugin.saveSettings();
+          })
+        );
+      new Setting(c)
+        .setName("Guide note")
+        .setDesc("Vault note the Guide button opens.")
+        .addText((t) =>
+          t.setValue(String(s.guideNote)).onChange(async (v) => {
+            s.guideNote = v.trim() || SIFI_DEFAULTS.guideNote;
+            await this.plugin.saveSettings();
+          })
+        );
+      new Setting(c)
         .setName("Duplicate-scan log")
         .setDesc("Note that records every item the duplicate scan trashes.")
         .addText((t) =>
@@ -937,12 +1379,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     ScanModal,
     TvPlayer,
     ThumbBudget,
+    BottomBar,
+    PosterFactory,
     buildMedia,
     loadCaptions,
     keepOne,
     thumbSrc,
+    BOTTOM_BAR_TABS,
     SIFI_DEFAULTS,
   };
 }
 
-module.exports = { build, SIFI_DEFAULTS };
+module.exports = { build, SIFI_DEFAULTS, BOTTOM_BAR_TABS };
