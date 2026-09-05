@@ -14,6 +14,7 @@ class PluginSettingTab {}
 class Setting {}
 class Modal {}
 class Notice {}
+const setIcon = () => {};
 
 const source = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 const moduleRecord = { exports: {} };
@@ -29,6 +30,7 @@ vm.runInNewContext(source, {
       Setting,
       Modal,
       Notice,
+      setIcon,
       requestUrl: async () => ({}),
       normalizePath: (value) => value,
     };
@@ -58,6 +60,7 @@ const frontmatter = new Map([
     title: "Newer",
     video: "Media Log/Assets/newer.mp4",
     embed_url: "https://example.com/embed/newer",
+    canonical_url: "https://example.com/newer",
     starred: true,
   }],
   [files[2], { media_id: "ml-20260301-090000-web-ignored" }],
@@ -79,6 +82,7 @@ const app = {
   assert.equal(items[0].title, "Newer", "media_id timestamp is the sort fallback");
   assert.equal(items[0].video, "Media Log/Assets/newer.mp4");
   assert.equal(items[0].embedUrl, "https://example.com/embed/newer");
+  assert.equal(items[0].canonicalUrl, "https://example.com/newer");
   assert.equal(items[0].starred, true);
   assert.equal(items[1].watched, true);
 

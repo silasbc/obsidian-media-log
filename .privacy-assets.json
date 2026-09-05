@@ -8,6 +8,14 @@
     "b85cb70627175005b2b32a3218ba2d97f4401337f0af6767daf29d68bf13e3cd": {
       "reviewed": "2026-08-13",
       "source": "Sanitized select-demo-vault detail capture on the Mac mini; reviewed at original 2800x1800 resolution."
+    },
+    "1cf051680bdb978cd8a6ef1dd28ce1742d686dbe15ff13c9f03e582f39324b06": {
+      "reviewed": "2026-09-04",
+      "source": "Sanitized select-demo-vault Media Log 1.4.0 library capture on the Mac mini; reviewed at original 2800x1800 resolution."
+    },
+    "49aa194f4d262836d0994b30c37a90d3fdcbbfeb20ae30aaae9b22c90e3b0cb3": {
+      "reviewed": "2026-09-04",
+      "source": "Sanitized select-demo-vault Media Log 1.4.0 detail capture on the Mac mini; reviewed at original 2800x1800 resolution."
     }
   }
 }

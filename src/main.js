@@ -10,6 +10,7 @@ const {
   Setting,
   Modal,
   Notice,
+  setIcon,
   requestUrl,
   normalizePath,
 } = require("obsidian");
@@ -104,6 +105,13 @@ function extractMeta(html) {
   return meta;
 }
 
+function hasTextSelectionWithin(element) {
+  const selection = typeof window !== "undefined" && window.getSelection ? window.getSelection() : null;
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return false;
+  const node = selection.anchorNode || selection.focusNode;
+  return Boolean(node && element.contains(node));
+}
+
 module.exports = class MediaLogPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
@@ -168,6 +176,7 @@ module.exports = class MediaLogPlugin extends Plugin {
         title: fm.title || file.basename,
         creator: fm.creator || "",
         sourceUrl: fm.source_url || "",
+        canonicalUrl: fm.canonical_url || "",
         capturedAt,
         sortKey,
         screenshot: fm.screenshot || "",
@@ -396,7 +405,10 @@ class LibraryView extends ItemView {
       return;
     }
     for (const item of list.slice(0, 200)) {
-      const card = grid.createDiv({ cls: ["mlog-card", this.selected?.id === item.id ? "mlog-card--selected" : ""] });
+      const card = grid.createDiv({
+        cls: ["mlog-card", this.selected?.id === item.id ? "mlog-card--selected" : ""],
+        attr: { role: "button", tabindex: "0" },
+      });
       const thumb = card.createDiv({ cls: "mlog-card__thumb" });
       const shot = item.screenshot && this.app.vault.getAbstractFileByPath(item.screenshot);
       if (shot) {
@@ -412,7 +424,16 @@ class LibraryView extends ItemView {
       metaRow.createSpan({ cls: "mlog-chip", text: item.platform });
       if (item.creator) metaRow.createSpan({ text: item.creator });
       metaRow.createSpan({ cls: "mlog-card__date", text: String(item.capturedAt).slice(0, 10) });
-      card.addEventListener("click", () => this.selectItem(item));
+      const activate = () => this.selectItem(item);
+      card.addEventListener("click", () => {
+        if (hasTextSelectionWithin(card)) return;
+        activate();
+      });
+      card.addEventListener("keydown", (event) => {
+        if (event.target !== card || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        activate();
+      });
     }
     if (list.length > 200) {
       grid.createDiv({ cls: "mlog__empty-sub", text: `Showing 200 of ${list.length} — narrow the filters.` });
@@ -433,6 +454,10 @@ class LibraryView extends ItemView {
     meta.createSpan({ cls: "mlog-chip", text: item.platform });
     if (item.creator) meta.createSpan({ text: item.creator });
     if (item.capturedAt) meta.createSpan({ text: item.capturedAt });
+
+    const links = d.createDiv({ cls: "mlog-detail__links" });
+    this.renderCopyableLink(links, "Source", item.sourceUrl);
+    if (item.canonicalUrl) this.renderCopyableLink(links, "Canonical", item.canonicalUrl);
 
     // Tags (editable)
     const tagWrap = d.createDiv({ cls: "mlog-detail__tags" });
@@ -502,6 +527,32 @@ class LibraryView extends ItemView {
     const next = nav.createEl("button", { text: "Next" });
     next.disabled = completedUnwatchedItem ? visible.length === 0 : index < 0 || index >= visible.length - 1;
     next.addEventListener("click", () => this.selectItem(completedUnwatchedItem ? visible[0] : visible[index + 1]));
+  }
+
+  renderCopyableLink(container, label, value) {
+    if (!value) return;
+    const row = container.createDiv({ cls: "mlog-detail__link" });
+    row.createSpan({ cls: "mlog-detail__link-label", text: label });
+    row.createEl("strong", { text: value });
+    const copy = row.createSpan({
+      cls: "mlog-detail__copy",
+      attr: { role: "button", tabindex: "0", "aria-label": `Copy ${label.toLowerCase()} link` },
+    });
+    setIcon(copy, "copy");
+    const doCopy = async () => {
+      try {
+        await navigator.clipboard.writeText(value);
+        new Notice(`${label} link copied`);
+      } catch (error) {
+        new Notice(`Copy failed: ${error.message || error}`);
+      }
+    };
+    copy.addEventListener("click", doCopy);
+    copy.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      doCopy();
+    });
   }
 
   renderMedia(container, item) {

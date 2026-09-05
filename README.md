@@ -17,9 +17,9 @@ Select a card to review its media, metadata, tags, source, and neighboring items
 ## How it works
 
 - **Add item** (button or command palette → *Media Log: Add media item from URL*): paste a URL. The plugin fetches the page title, site name, description, and preview image, detects the platform (YouTube, X, TikTok, Instagram, Reddit, or generic web), and writes one item note into your items folder.
-- **Library** (ribbon icon, command palette, or `obsidian://media-log`): browse items newest-first. Filter by platform, tag, or review state; search titles/creators/URLs; click a card for the detail pane.
+- **Library** (ribbon icon, command palette, or `obsidian://media-log`): browse items newest-first. Filter by platform, tag, or review state; search titles/creators/URLs; click a card for the detail pane. Card titles and metadata remain selectable for copying; drag-selecting text does not open the item.
 - **Review loop**: opening an item records `watched: true`; star keepers with one tap; work through the current filtered set with Previous/Next. All review state stays in the item's frontmatter.
-- **Detail pane**: plays runner-provided local `video` files or HTTPS `embed_url` media, falls back to the preview image, edits tags, and provides source/note/reversible-delete actions.
+- **Detail pane**: plays runner-provided local `video` files or HTTPS `embed_url` media, falls back to the preview image, edits tags, shows selectable Source and Canonical URLs with one-tap copy controls, and provides source/note/reversible-delete actions.
 
 ## Item format
 
@@ -28,6 +28,7 @@ Select a card to review its media, metadata, tags, source, and neighboring items
 media_id: "ml-20260708-213000-youtube-how-to-sharpen-a-chisel"
 platform: "YouTube"
 source_url: "https://www.youtube.com/watch?v=…"
+canonical_url: "https://www.youtube.com/watch?v=…" # optional normalized destination
 captured_at: "2026-07-08 21:30:00"
 creator: "YouTube"
 title: "How to sharpen a chisel"

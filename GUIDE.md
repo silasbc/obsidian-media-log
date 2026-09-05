@@ -1,6 +1,6 @@
 # Media Log — the guide
 
-This walkthrough is for two readers at once: a person setting up Media Log in an Obsidian vault, and an AI agent that has been pointed at this repository and asked to install, configure, or extend it. Everything here describes version 1.2.0.
+This walkthrough is for two readers at once: a person setting up Media Log in an Obsidian vault, and an AI agent that has been pointed at this repository and asked to install, configure, or extend it. Everything here describes version 1.4.0.
 
 ## How it works
 
@@ -54,11 +54,11 @@ Add `&autosave=false` to review the form before writing. Add `&vault=<encoded va
 
 ### Review a collection
 
-Use the platform, tag, watched, and starred filters to define the current set. Opening an item marks it watched; Star keeps it visible as a keeper. Previous and Next stay inside the filtered set, so a queue can be processed without returning to the grid after every item.
+Use the platform, tag, watched, and starred filters to define the current set. Opening an item marks it watched; Star keeps it visible as a keeper. Previous and Next stay inside the filtered set, so a queue can be processed without returning to the grid after every item. Card titles and metadata can be drag-selected without opening the item. In detail, Source and optional Canonical URLs remain selectable and also have one-tap copy controls.
 
 ### Feed Media Log from an agent or runner
 
-Write one Markdown file per item into the configured Items folder. The required interoperability fields are `media_id`, `platform`, `source_url`, `captured_at`, `creator`, `title`, and `status`. Optional `screenshot`, `video`, `embed_url`, `tags`, `watched`, and `starred` fields progressively enhance the Library. [RUNNER.md](RUNNER.md) gives a self-hosted companion-runner recipe while keeping private capture infrastructure out of this public repository.
+Write one Markdown file per item into the configured Items folder. The required interoperability fields are `media_id`, `platform`, `source_url`, `captured_at`, `creator`, `title`, and `status`. Optional `canonical_url`, `screenshot`, `video`, `embed_url`, `tags`, `watched`, and `starred` fields progressively enhance the Library. [RUNNER.md](RUNNER.md) gives a self-hosted companion-runner recipe while keeping private capture infrastructure out of this public repository.
 
 ### Leave cleanly
 

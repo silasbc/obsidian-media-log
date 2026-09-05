@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 — 2026-09-04
+
+- Made gallery titles and metadata selectable without opening the item during a drag-to-copy gesture.
+- Preserved full keyboard activation for gallery cards with Enter and Space.
+- Added selectable Source and Canonical URL rows in item detail.
+- Added one-tap, keyboard-accessible copy controls for Source and Canonical URLs.
+
 ## 1.2.0 — 2026-08-07
 
 - Added durable watched and starred review state in item frontmatter.
