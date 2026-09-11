@@ -487,6 +487,32 @@ var require_browse = __commonJS({
       item.caption = "";
       return item;
     }
+    function swipeIntent(dx, dy, dtMs, opts) {
+      const o = opts || {};
+      const minPx = o.minPx > 0 ? o.minPx : 60;
+      const minVel = o.minVelocity > 0 ? o.minVelocity : 0.45;
+      const ax = Math.abs(Number(dx) || 0);
+      const ay = Math.abs(Number(dy) || 0);
+      if (ay < 12 || ay < ax * 1.2) return "";
+      const fast = dtMs > 0 && ay >= 24 && ay / dtMs >= minVel;
+      if (ay < minPx && !fast) return "";
+      return dy < 0 ? "next" : "prev";
+    }
+    function normalizeTag(raw) {
+      return safeStr(raw).replace(/^#+/, "").replace(/\s+/g, " ").trim();
+    }
+    function hasTag(tags, raw) {
+      const t = normalizeTag(raw).toLowerCase();
+      return !!t && (tags || []).some((x) => safeStr(x).toLowerCase() === t);
+    }
+    function toggleTag(tags, raw) {
+      const list = (tags || []).map((x) => safeStr(x)).filter(Boolean);
+      const t = normalizeTag(raw);
+      if (!t) return list;
+      const low = t.toLowerCase();
+      const i = list.findIndex((x) => x.toLowerCase() === low);
+      return i >= 0 ? list.filter((_, j) => j !== i) : list.concat([t]);
+    }
     module2.exports = {
       MONTHS,
       SORTS,
@@ -549,7 +575,11 @@ var require_browse = __commonJS({
       captureEmbedUrl,
       isInstagramLoginWall,
       captureFallbackTitle,
-      captureEnrich
+      captureEnrich,
+      swipeIntent,
+      normalizeTag,
+      hasTag,
+      toggleTag
     };
   }
 });
@@ -801,7 +831,8 @@ var require_sifi = __commonJS({
         const video = item.video && item.video !== "none" && app.vault.getAbstractFileByPath(item.video);
         const streams = o.streams;
         if (!video && streams && streams.can(item)) {
-          const attr = { controls: "", preload: "auto", playsinline: "" };
+          const attr = { preload: "auto", playsinline: "" };
+          if (o.controls !== false) attr.controls = "";
           if (o.autoplay) attr.autoplay = "";
           if (o.loop) attr.loop = "";
           const known = streams.peek(item);
@@ -842,7 +873,8 @@ var require_sifi = __commonJS({
           return { kind: "none", el: gone };
         }
         if (video) {
-          const attr = { controls: "", preload: "auto", playsinline: "", src: app.vault.getResourcePath(video) };
+          const attr = { preload: "auto", playsinline: "", src: app.vault.getResourcePath(video) };
+          if (o.controls !== false) attr.controls = "";
           if (o.autoplay) attr.autoplay = "";
           if (o.loop) attr.loop = "";
           const player = container.createEl("video", { cls, attr });
@@ -1146,6 +1178,11 @@ var require_sifi = __commonJS({
           this.keydown = null;
           this.paintWatched = null;
           this.pre = null;
+          this.media = null;
+          this.sheet = null;
+          this.hold = false;
+          this.paintTagLine = null;
+          this.swipedAt = 0;
         }
         // Preload the next playable item into the browser cache: its local file, or —
         // with no local copy — ask Instagram for its link now so stepping is instant.
@@ -1185,22 +1222,118 @@ var require_sifi = __commonJS({
         open() {
           this.overlay = document.body.createDiv({ cls: this.modal ? "mlog-tv mlog-tv--modal" : "mlog-tv" });
           this.overlay.addEventListener("click", (e) => {
+            if (Date.now() - this.swipedAt < 350) return;
             if (this.modal && e.target === this.overlay) {
               this.close();
               return;
+            }
+            if (this.modal && !this.hold && this.media && isVid(this.media) && e.target === this.media.el && this.media.el.getAttribute("controls") === null) {
+              this.togglePause();
             }
             this.showControls();
           });
           this.panel = this.overlay.createDiv({ cls: "mlog-tv__panel" });
           this.ctl = this.overlay.createDiv({ cls: "mlog-tv__ctl" });
+          if (this.modal) {
+            const x = this.overlay.createEl("button", { cls: "mlog-tv__close", attr: { "aria-label": "Close" } });
+            setIcon2(x, "x");
+            x.addEventListener("click", (e) => {
+              e.stopPropagation();
+              this.close();
+            });
+          }
+          this.bindSwipe();
           this.keydown = (e) => {
+            if (this.hold) {
+              if (e.key === "Escape") this.closeTags();
+              return;
+            }
             if (e.key === "Escape") this.close();
-            else if (e.key === "ArrowRight") this.step(1);
-            else if (e.key === "ArrowLeft") this.step(-1);
+            else if (e.key === "ArrowRight" || e.key === "ArrowDown") this.step(1);
+            else if (e.key === "ArrowLeft" || e.key === "ArrowUp") this.step(-1);
           };
           document.addEventListener("keydown", this.keydown);
           if (this.view.bar) this.view.bar.hide(true);
           this.show(this.idx);
+        }
+        // Vertical flicks step the reel like a feed (owner 2026-09-11: "swipe through
+        // them like TikTok or Insta"). The panel follows the finger, rubber-bands at
+        // the list's ends, and snaps back on a short or sideways drag, so a tap or a
+        // native scrub is never mistaken for a step. The step runs inside touchend,
+        // which iOS counts as the gesture that allows sound.
+        bindSwipe() {
+          const ov = this.overlay;
+          let st = null;
+          const reset = () => {
+            if (!this.panel) return;
+            this.panel.classList.remove("mlog-tv__panel--drag");
+            this.panel.style.transform = "";
+          };
+          ov.addEventListener(
+            "touchstart",
+            (e) => {
+              st = null;
+              if (e.touches.length !== 1 || this.hold || !this.panel) return;
+              const t = e.target;
+              if (t && t.closest && t.closest(".mlog-tv__sheet, .mlog-tv__btn, .mlog-tv__close, .mlog-tv__tag, button, input, select")) return;
+              const p = e.touches[0];
+              st = { x: p.clientX, y: p.clientY, t: Date.now(), vertical: null };
+            },
+            { passive: true }
+          );
+          ov.addEventListener(
+            "touchmove",
+            (e) => {
+              if (!st || e.touches.length !== 1 || !this.panel) return;
+              const p = e.touches[0];
+              const dx = p.clientX - st.x;
+              const dy = p.clientY - st.y;
+              if (st.vertical === null) {
+                if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+                st.vertical = Math.abs(dy) > Math.abs(dx);
+                if (st.vertical) this.panel.classList.add("mlog-tv__panel--drag");
+              }
+              if (!st.vertical) return;
+              if (e.cancelable) e.preventDefault();
+              const len = this.list.length;
+              const edge = dy < 0 ? browse2.nextIndex(this.idx, len, this.loop) < 0 : browse2.prevIndex(this.idx, len, this.loop) < 0;
+              this.panel.style.transform = `translateY(${dy * (edge ? 0.25 : 0.9)}px)`;
+            },
+            { passive: false }
+          );
+          ov.addEventListener("touchend", (e) => {
+            if (!st) return;
+            const s = st;
+            st = null;
+            if (!s.vertical) {
+              reset();
+              return;
+            }
+            const p = e.changedTouches && e.changedTouches[0];
+            const dx = p ? p.clientX - s.x : 0;
+            const dy = p ? p.clientY - s.y : 0;
+            const intent = browse2.swipeIntent(dx, dy, Date.now() - s.t);
+            reset();
+            this.swipedAt = Date.now();
+            if (intent === "next") this.step(1, "up");
+            else if (intent === "prev") this.step(-1, "down");
+          });
+          ov.addEventListener("touchcancel", () => {
+            st = null;
+            reset();
+          });
+        }
+        togglePause() {
+          const v = this.media && this.media.el;
+          if (!v || typeof v.play !== "function") return;
+          if (v.paused) {
+            const p = v.play();
+            if (p && typeof p.catch === "function") p.catch(() => {
+            });
+          } else {
+            v.pause();
+          }
+          if (this.panel) this.panel.classList.toggle("mlog-tv__panel--paused", v.paused);
         }
         clearTimers() {
           if (this.timer) clearInterval(this.timer);
@@ -1223,7 +1356,7 @@ var require_sifi = __commonJS({
           const f = this.overlay.querySelector("iframe");
           if (f) f.src = "about:blank";
         }
-        show(idx) {
+        show(idx, anim) {
           this.clearTimers();
           this.stopMedia();
           const item = this.list[idx];
@@ -1233,13 +1366,29 @@ var require_sifi = __commonJS({
           }
           this.idx = idx;
           this.panel.empty();
+          this.panel.classList.remove("mlog-tv__panel--in-up", "mlog-tv__panel--in-down", "mlog-tv__panel--paused");
           this.panel.classList.toggle("mlog-tv__panel--wide", !browse2.isPortrait(item));
+          if (anim) {
+            this.panel.classList.add("mlog-tv__panel--in-" + anim);
+            this.panel.addEventListener("animationend", () => this.panel && this.panel.classList.remove("mlog-tv__panel--in-" + anim), { once: true });
+          }
+          const phonePopup = this.modal && isPhone();
           const media = buildMedia(this.app, this.panel, item, {
             autoplay: true,
             loop: this.modal && !this.auto,
             // the pop-up loops a reel until auto-advance is switched on
+            controls: !phonePopup,
+            // the phone pop-up is a feed: tap pauses, the flick steps
             streams: this.view.streams(),
             onEnded: () => {
+              if (this.hold) {
+                try {
+                  media.el.currentTime = 0;
+                  tryPlay(media.el, null, true);
+                } catch {
+                }
+                return;
+              }
               if (this.auto) this.step(1);
             },
             onMuted: (player) => {
@@ -1249,10 +1398,15 @@ var require_sifi = __commonJS({
               if (!this.overlay || this.idx !== idx) return;
               media.kind = fb.kind;
               media.el = fb.el;
-              if (this.auto && !isVid(media)) this.adv = browse2.advInit(this.dwell, 0, Date.now());
+              if (this.auto && !isVid(media) && !this.hold) this.adv = browse2.advInit(this.dwell, 0, Date.now());
               this.paintControls(item, media);
             }
           });
+          this.media = media;
+          if (phonePopup) {
+            const paused = this.panel.createDiv({ cls: "mlog-tv__paused", attr: { "aria-hidden": "true" } });
+            setIcon2(paused, "play");
+          }
           this.paintControls(item, media);
           this.preloadNext();
           this.watchT = setTimeout(async () => {
@@ -1272,7 +1426,8 @@ var require_sifi = __commonJS({
           }, TICK_MS);
           this.showControls();
         }
-        step(dir) {
+        step(dir, anim) {
+          if (this.hold) return;
           const len = this.list.length;
           const ni = dir > 0 ? browse2.nextIndex(this.idx, len, this.loop) : browse2.prevIndex(this.idx, len, this.loop);
           if (ni < 0) {
@@ -1283,12 +1438,29 @@ var require_sifi = __commonJS({
             this.close();
             return;
           }
-          this.show(ni);
+          this.show(ni, anim);
         }
         paintControls(item, media) {
           const ctl = this.ctl;
           ctl.empty();
           ctl.createDiv({ cls: "mlog-tv__title", text: `${this.idx + 1} / ${this.list.length} \xB7 ${item.title}` });
+          const tagLine = ctl.createDiv({ cls: "mlog-tv__tags" });
+          this.paintTagLine = () => {
+            tagLine.empty();
+            for (const t of item.tags || []) {
+              const c = tagLine.createEl("button", { cls: "mlog-tv__tag", text: "#" + t, attr: { "aria-label": `Edit tags (${t})` } });
+              c.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.openTags(item);
+              });
+            }
+            const add = tagLine.createEl("button", { cls: "mlog-tv__tag mlog-tv__tag--add", text: item.tags && item.tags.length ? "+ tag" : "+ add a tag" });
+            add.addEventListener("click", (e) => {
+              e.stopPropagation();
+              this.openTags(item);
+            });
+          };
+          this.paintTagLine();
           const why = whyNoVideo(this.app, item, this.view.streams());
           if (why) ctl.createDiv({ cls: "mlog-tv__why", text: why });
           const cap = ctl.createDiv({ cls: "mlog-tv__caption" });
@@ -1349,6 +1521,7 @@ var require_sifi = __commonJS({
             item.watched
           );
           this.paintWatched = () => watched.classList.toggle("mlog-tv__btn--active", !!item.watched);
+          btn(row1, "Tags", "tag", () => this.openTags(item), !!(item.tags && item.tags.length));
           row1.createDiv({ cls: "mlog-tv__spacer" });
           btn(row1, "Close", "x", () => this.close());
           const row2 = ctl.createDiv({ cls: "mlog-tv__row" });
@@ -1396,14 +1569,110 @@ var require_sifi = __commonJS({
           if (!this.ctl) return;
           this.ctl.classList.remove("mlog-tv__ctl--hidden");
           if (this.fadeT) clearTimeout(this.fadeT);
+          if (this.hold) return;
           this.fadeT = setTimeout(() => {
             if (this.ctl) this.ctl.classList.add("mlog-tv__ctl--hidden");
           }, CONTROLS_FADE_MS);
+        }
+        // ---- the tag sheet -------------------------------------------------------
+        // Desktop tags an item in the pane beside the grid; the phone had no way at
+        // all. Inside the players a sheet slides up over the reel: every tag the
+        // library knows as a tap-to-toggle chip with its count, and a field for a new
+        // one. Each tap writes the note's frontmatter the same way the pane does. The
+        // reel holds still (no auto-advance, no swipes, no fade) until Done.
+        openTags(item) {
+          if (!this.overlay) return;
+          if (this.sheet) {
+            this.closeTags();
+            return;
+          }
+          this.hold = true;
+          this.adv = null;
+          this.showControls();
+          const sheet = this.overlay.createDiv({ cls: "mlog-tv__sheet" });
+          this.sheet = sheet;
+          sheet.addEventListener("click", (e) => e.stopPropagation());
+          const head = sheet.createDiv({ cls: "mlog-tv__sheet-head" });
+          head.createDiv({ cls: "mlog-tv__sheet-title", text: "Tags" });
+          const done = head.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-done", text: "Done" });
+          done.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.closeTags();
+          });
+          const form = sheet.createDiv({ cls: "mlog-tv__sheet-form" });
+          const input = form.createEl("input", {
+            cls: "mlog-tv__sheet-input",
+            type: "text",
+            placeholder: "New tag",
+            attr: { autocapitalize: "none", autocorrect: "off", enterkeyhint: "done", "aria-label": "New tag" }
+          });
+          const add = form.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-add", text: "Add" });
+          const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
+          const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
+          const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
+          const paint = () => {
+            chips.empty();
+            const items = (this.view.items || []).map((x) => x && x.id === item.id ? item : x);
+            const uni = browse2.tagUniverse(items);
+            hint.setText(uni.length ? "Tap a tag to add or remove it. Counts are across the library." : "No tags yet \u2014 type one above. Your own categories, not hashtags.");
+            for (const u of uni) {
+              const on = browse2.hasTag(item.tags, u.label);
+              const c = chips.createEl("button", {
+                cls: "mlog-tag mlog-tv__sheet-chip" + (on ? " mlog-tag--on" : ""),
+                text: `${u.label} \xB7 ${u.n}`,
+                attr: { "aria-pressed": String(on) }
+              });
+              c.addEventListener("click", (e) => {
+                e.stopPropagation();
+                apply(u.label);
+              });
+            }
+          };
+          const apply = async (raw) => {
+            const next = browse2.toggleTag(item.tags, raw);
+            item.tags = next;
+            item.tagsLow = next.map((t) => t.toLowerCase());
+            paint();
+            if (this.paintTagLine) this.paintTagLine();
+            try {
+              await this.plugin.updateTags(item, item.tags);
+              status.setText("");
+            } catch (e) {
+              status.setText(`Couldn't save that tag: ${e && e.message || e}`);
+            }
+          };
+          const submit = () => {
+            const raw = input.value;
+            input.value = "";
+            if (browse2.normalizeTag(raw) && !browse2.hasTag(item.tags, raw)) apply(raw);
+            input.focus();
+          };
+          add.addEventListener("click", (e) => {
+            e.stopPropagation();
+            submit();
+          });
+          input.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            submit();
+          });
+          paint();
+        }
+        closeTags() {
+          if (this.sheet) this.sheet.remove();
+          this.sheet = null;
+          if (!this.hold) return;
+          this.hold = false;
+          if (this.overlay && this.auto && !isVid(this.media)) this.adv = browse2.advInit(this.dwell, 0, Date.now());
+          this.showControls();
         }
         // Tear down without touching the library (used by the error card).
         teardown() {
           this.clearTimers();
           this.stopMedia();
+          this.sheet = null;
+          this.hold = false;
+          this.media = null;
           if (this.pre) {
             try {
               this.pre.removeAttribute("src");

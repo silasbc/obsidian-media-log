@@ -173,7 +173,21 @@ const app = {
   assert.equal(tv.loop, true, "TV loops");
   assert.equal(tv.dwell, 10, "dwell comes from settings (10s default)");
 
-  console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search.");
+  // 1.4.0-sifi.9: the phone pass — the players carry the swipe binding and the tag sheet
+  const P = MediaLogPlugin.sifi.TvPlayer.prototype;
+  for (const m of ["bindSwipe", "togglePause", "openTags", "closeTags"]) assert.equal(typeof P[m], "function", `TvPlayer.${m} exists`);
+  assert.equal(modal.hold, false, "a fresh player is not holding (no tag sheet open)");
+  assert.equal(modal.sheet, null);
+  assert.equal(modal.media, null, "nothing built until open()");
+  modal.hold = true;
+  modal.idx = 0;
+  modal.step(1);
+  assert.equal(modal.idx, 0, "step() is a no-op while the tag sheet holds the item");
+  modal.hold = false;
+  modal.closeTags(); // safe with no sheet and no overlay
+  assert.equal(modal.hold, false);
+
+  console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search, phone-pass wiring.");
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -182,7 +196,7 @@ const app = {
 // ---- G. StreamResolver: the embed page's link is cached, one request is shared, a miss is remembered ----
 (async () => {
   const { StreamResolver } = MediaLogPlugin.sifi;
-  const CTX = '\\"video_url\\":\\"https:\\\\\\/\\\\\\/scontent-x.cdninstagram.com\\\\\\/v\\\\\\/a.mp4?x=1&oe=6A9E171E\\"';
+  const CTX = '\\"video_url\\":\\"https:\\\\\\/\\\\\\/scontent-x.cdninstagram.com\\\\\\/v\\\\\\/a.mp4?x=1&oe=7FFFFFFF\\"';
   let calls = 0;
   stubRequest = async (req) => {
     calls++;
@@ -194,7 +208,7 @@ const app = {
   const r = new StreamResolver(plugin);
   const reel = { id: "ml-abc", kind: "reel", sourceUrl: "https://www.instagram.com/reel/ABC/", embedUrl: "https://www.instagram.com/reel/ABC/embed/captioned/" };
   const [u1, u2] = await Promise.all([r.resolve(reel), r.resolve(reel)]);
-  assert.equal(u1, "https://scontent-x.cdninstagram.com/v/a.mp4?x=1&oe=6A9E171E");
+  assert.equal(u1, "https://scontent-x.cdninstagram.com/v/a.mp4?x=1&oe=7FFFFFFF");
   assert.equal(u2, u1);
   assert.equal(calls, 1, "two callers at once share one request");
   assert.equal(r.peek(reel), u1, "cached and fresh");

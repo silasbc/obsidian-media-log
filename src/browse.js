@@ -670,6 +670,44 @@ function enrichItem(item, fm) {
   return item;
 }
 
+// ---- phone gestures + tag edits (1.4.0-sifi.9) --------------------------------
+
+// A vertical flick in the player steps the reel like a feed; anything sideways,
+// short, or slow is a tap or a native scrub and steps nothing. dx/dy are px from
+// touch start, dtMs the touch's duration. Up (dy < 0) → "next", down → "prev".
+function swipeIntent(dx, dy, dtMs, opts) {
+  const o = opts || {};
+  const minPx = o.minPx > 0 ? o.minPx : 60;
+  const minVel = o.minVelocity > 0 ? o.minVelocity : 0.45; // px per ms — a quick short flick still counts
+  const ax = Math.abs(Number(dx) || 0);
+  const ay = Math.abs(Number(dy) || 0);
+  if (ay < 12 || ay < ax * 1.2) return "";
+  const fast = dtMs > 0 && ay >= 24 && ay / dtMs >= minVel;
+  if (ay < minPx && !fast) return "";
+  return dy < 0 ? "next" : "prev";
+}
+
+// "#Bench " → "Bench"; inner runs of whitespace collapse; nothing usable → "".
+function normalizeTag(raw) {
+  return safeStr(raw).replace(/^#+/, "").replace(/\s+/g, " ").trim();
+}
+
+function hasTag(tags, raw) {
+  const t = normalizeTag(raw).toLowerCase();
+  return !!t && (tags || []).some((x) => safeStr(x).toLowerCase() === t);
+}
+
+// Toggle one tag on a list, case-insensitively: present → removed, absent →
+// appended with the typed casing. Never mutates; the list comes back as strings.
+function toggleTag(tags, raw) {
+  const list = (tags || []).map((x) => safeStr(x)).filter(Boolean);
+  const t = normalizeTag(raw);
+  if (!t) return list;
+  const low = t.toLowerCase();
+  const i = list.findIndex((x) => x.toLowerCase() === low);
+  return i >= 0 ? list.filter((_, j) => j !== i) : list.concat([t]);
+}
+
 module.exports = {
   MONTHS,
   SORTS,
@@ -733,4 +771,8 @@ module.exports = {
   isInstagramLoginWall,
   captureFallbackTitle,
   captureEnrich,
+  swipeIntent,
+  normalizeTag,
+  hasTag,
+  toggleTag,
 };

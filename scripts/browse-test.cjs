@@ -550,3 +550,34 @@ test("captureEnrich: one call bundles kind, embed_url, and the resolved title", 
   const web = b.captureEnrich("https://example.com/article", "An article");
   assert.deepEqual(web, { kind: "", embedUrl: "", title: "An article" });
 });
+
+// ---- phone gestures + tag edits (1.4.0-sifi.9) ----
+test("swipeIntent: a vertical flick steps, sideways/short/slow drags do not", () => {
+  assert.equal(b.swipeIntent(4, -120, 300), "next", "a long upward drag → next");
+  assert.equal(b.swipeIntent(-6, 90, 400), "prev", "a long downward drag → previous");
+  assert.equal(b.swipeIntent(0, -30, 40), "next", "a short but quick flick counts (0.75 px/ms)");
+  assert.equal(b.swipeIntent(0, -30, 400), "", "a short slow drag is a tap or a wobble");
+  assert.equal(b.swipeIntent(0, -10, 5), "", "under 12px is never a swipe, however fast");
+  assert.equal(b.swipeIntent(140, -100, 200), "", "sideways beats vertical → a native scrub, not a step");
+  assert.equal(b.swipeIntent(80, -100, 200), "next", "mostly vertical still steps");
+  assert.equal(b.swipeIntent(0, -50, 300, { minPx: 40 }), "next", "threshold is tunable");
+  assert.equal(b.swipeIntent(NaN, undefined, 0), "", "garbage in → no step");
+});
+
+test("normalizeTag / hasTag / toggleTag: hashes and whitespace stripped, case-insensitive toggle, typed casing kept", () => {
+  assert.equal(b.normalizeTag("  #Bench  press "), "Bench press");
+  assert.equal(b.normalizeTag("##x"), "x");
+  assert.equal(b.normalizeTag("#"), "");
+  assert.equal(b.normalizeTag(null), "");
+  assert.equal(b.hasTag(["Bench", "Meme"], "#bench"), true);
+  assert.equal(b.hasTag(["Bench"], "press"), false);
+  assert.equal(b.hasTag([], ""), false);
+  const one = b.toggleTag([], "#Bench");
+  assert.deepEqual(one, ["Bench"], "absent → appended without the hash");
+  const two = b.toggleTag(one, "meme");
+  assert.deepEqual(two, ["Bench", "meme"], "order kept, typed casing kept");
+  assert.deepEqual(b.toggleTag(two, "BENCH"), ["meme"], "present (any casing) → removed");
+  assert.deepEqual(b.toggleTag(two, "   "), ["Bench", "meme"], "blank changes nothing");
+  assert.deepEqual(b.toggleTag(["Bench", null, "undefined"], "x"), ["Bench", "x"], "ghost entries are dropped on the way through");
+  assert.deepEqual(two, ["Bench", "meme"], "the input list is never mutated");
+});

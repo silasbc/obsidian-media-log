@@ -31,6 +31,8 @@ Ported from the old Media Library surface (shipped there 2026-08-07/08), now on 
 10. **Stream from Instagram** (owner, 2026-09-05: "if streaming fixes it then do that"). With no local copy on this device, the player fetches the reel's embed page with a plain request, pulls Instagram's own CDN link out of it (good for about a day), and streams it in a native `<video>` — which autoplays where the embed never does. Reels the runner had given up on (`video: none`) play this way too. Links are cached per item for the session, a miss is remembered for fifteen minutes and the embed takes over, and the next reel's link is fetched ahead in the players. Setting "Stream from Instagram", default on. Playable-here and the players' lists count a streamable reel as playable.
 11. **Capture-time enrichment.** Add-item (including the `obsidian://media-log` share-sheet path) now derives `embed_url` and `kind` from the url the same way the runner's `lib/medialog.js` does — Instagram reel/post/tv → the captioned embed page at the same path word, YouTube → `/embed/<id>` — and falls back to "Instagram Reel/Post/Video `<code>`" when the fetched title is empty, a login wall ("Log in", "Login • Instagram", "Just a moment…"), or nothing better than the url itself. A plugin-captured note now carries the same shape a runner-captured note would for the same link. Pure functions in `src/browse.js` (`captureKindOf`, `captureEmbedUrl`, `captureFallbackTitle`, `captureEnrich`), unit-tested in `scripts/browse-test.cjs`.
 
+12. **The phone pass** (owner, 2026-09-11: "make the ava tags and everything in media log work on mobile … swipe through them like TikTok or Insta"). The pop-up player is a reel feed: it fills the screen, a vertical flick steps to the next or previous item (the panel follows the finger and rubber-bands at the list's ends; a short, slow, or sideways drag steps nothing, so a tap or a native scrub is never mistaken for a step), a tap on the video pauses and resumes it, and a persistent × in the corner closes it. Tags now work in both players: a Tags button and the item's own tags under the title open a sheet with every tag the library knows as a tap-to-toggle chip with its count, plus a New tag field; each tap writes the note's `tags` exactly as the desktop pane does, and the reel holds still (no auto-advance, no swipes, no fade) until Done. On a phone the toolbar and the tag chips are one thumb-scrollable line each, search is full width, tap targets are 36px or better, and the grid is two real columns (the flex column's `align-items: flex-start` had let it shrink to one 170px column). Pure functions in `src/browse.js` (`swipeIntent`, `normalizeTag`, `hasTag`, `toggleTag`), unit-tested; the player wiring is covered by `scripts/sifi-smoke.cjs`.
+
 Settings under "Sifi's edition": items per page, portrait cards, TV dwell seconds, and the duplicate-scan log path.
 
 Still an idea, never built: Embed Lab, a test screen to find the best-playing embed per source.
@@ -42,6 +44,14 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 - Deploy = copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/media-log/` and restart Obsidian (or toggle the plugin off and on).
 
 ## Changelog (Sifi's edition)
+
+### 1.4.0-sifi.9 — 2026-09-11
+
+- The phone pass: the pop-up fills the screen and a vertical flick steps through the reels (finger-follow, rubber band at the ends, slide-in), tap pauses, a corner × closes. Tags inside the players: tap-to-toggle chips with counts + a New tag field, writing `tags` the way the pane does; the reel holds still while the sheet is up. Phone toolbar and tag chips scroll in one line each; the grid is two columns (was one 170px column). Keyboard: Up/Down step like Left/Right; Escape closes the sheet before the player. Smoke fixture: the fake CDN link's `oe=` had expired on 2026-09-07, pinned to 2038.
+
+### 1.4.0-sifi.8 — 2026-09-05
+
+- Capture-time enrichment for plugin-only captures (`embed_url`, `kind`, login-wall-safe titles) — see feature 11.
 
 ### 1.4.0-sifi.7 — 2026-09-05
 

@@ -163,3 +163,52 @@
 .mlog-tv__caption { font-size: 0.78rem; line-height: 1.35; color: #d0d0d5; max-height: 3.4em; overflow: hidden; overflow-wrap: anywhere; }
 .mlog-tv__caption:empty { display: none; }
 .mlog-tv__unmute { background: #0a84ff; color: #fff; margin: 0.3rem 0; }
+/* ---- 1.4.0-sifi.9: the phone pass — reel-feed swipe, tag sheet, one-line toolbars ---- */
+.mlog-tv__panel { transition: transform 0.18s ease-out; }
+.mlog-tv__panel--drag { transition: none; }
+@keyframes mlog-in-up { from { transform: translateY(56px); opacity: 0.35; } to { transform: none; opacity: 1; } }
+@keyframes mlog-in-down { from { transform: translateY(-56px); opacity: 0.35; } to { transform: none; opacity: 1; } }
+.mlog-tv__panel--in-up { animation: mlog-in-up 0.2s ease-out; }
+.mlog-tv__panel--in-down { animation: mlog-in-down 0.2s ease-out; }
+.mlog-tv__ctl--hidden { pointer-events: none; } /* faded controls never swallow a tap on the video */
+.mlog-tv__close { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 12px; z-index: 5; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 999px; background: rgba(0, 0, 0, 0.45); color: #fff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: none; }
+.mlog-tv__close svg { width: 20px; height: 20px; }
+.mlog-tv__paused { position: absolute; left: 50%; top: 50%; width: 76px; height: 76px; margin: -38px 0 0 -38px; border-radius: 999px; background: rgba(0, 0, 0, 0.5); color: #fff; display: none; align-items: center; justify-content: center; pointer-events: none; }
+.mlog-tv__paused svg { width: 34px; height: 34px; margin-left: 4px; }
+.mlog-tv__panel--paused .mlog-tv__paused { display: flex; }
+.mlog-tv__tags { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.mlog-tv__tags:empty { display: none; }
+.mlog-tv__tag { font-size: 0.72rem; line-height: 1.2; min-height: 28px; border-radius: 999px; padding: 0.15rem 0.6rem; background: rgba(255, 255, 255, 0.16); color: #fff; border: 0; box-shadow: none; cursor: pointer; }
+.mlog-tv__tag--add { background: transparent; border: 1px dashed rgba(255, 255, 255, 0.55); color: #d0d0d5; }
+.mlog-tv__sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 72%; overflow-y: auto; -webkit-overflow-scrolling: touch; background: var(--background-primary); color: var(--text-normal); border-radius: 16px 16px 0 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 10px; animation: mlog-sheet-up 0.22s ease-out; }
+@keyframes mlog-sheet-up { from { transform: translateY(48px); opacity: 0; } to { transform: none; opacity: 1; } }
+.mlog-tv__sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.mlog-tv__sheet-title { font-weight: 600; font-size: 1rem; }
+.mlog-tv__sheet .mlog-tv__btn { background: var(--interactive-accent); color: var(--text-on-accent); }
+.mlog-tv__sheet-form { display: flex; gap: 8px; }
+.mlog-tv__sheet-input { flex: 1; min-width: 0; min-height: 40px; font-size: 16px; } /* 16px: iOS does not zoom the page to the field */
+.mlog-tv__sheet-hint { font-size: 0.75rem; color: var(--text-muted); }
+.mlog-tv__sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.mlog-tv__sheet-chips:empty { display: none; }
+.mlog-tv__sheet-chip { min-height: 36px; font-size: 0.82rem; padding: 0.2rem 0.85rem; }
+.mlog-tv__sheet-status { font-size: 0.75rem; color: var(--text-error, var(--color-red)); }
+.mlog-tv__sheet-status:empty { display: none; }
+@media (max-width: 700px) {
+  /* the body is a flex column here, and flex-start let the grid shrink to one 170px column */
+  .mlog--sifi .mlog__body { align-items: stretch; }
+  .mlog--sifi .mlog__grid { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* one line each, thumb-scrollable, instead of four rows of wrapped chips above the grid */
+  .mlog--sifi .mlog__filters input[type="search"] { flex: 1 1 100%; min-height: 40px; }
+  .mlog--sifi .mlog__filters select, .mlog--sifi .mlog__filters button { flex: 1 1 auto; min-width: 0; max-width: 100%; min-height: 36px; }
+  .mlog--sifi .mlog__tools, .mlog--sifi .mlog__tags { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin-left: -0.75rem; margin-right: -0.75rem; padding: 0.1rem 0.75rem 0.4rem; }
+  .mlog--sifi .mlog__tools::-webkit-scrollbar, .mlog--sifi .mlog__tags::-webkit-scrollbar { display: none; }
+  .mlog--sifi .mlog-tool, .mlog--sifi .mlog-tag { flex: 0 0 auto; white-space: nowrap; min-height: 36px; }
+  .mlog--sifi .mlog__pager { flex-wrap: wrap; row-gap: 0.4rem; }
+  .mlog--sifi .mlog__pager button { min-height: 40px; }
+  /* the pop-up is a reel feed: the item fills the screen, controls float over it */
+  .mlog-tv--modal { background: #000; }
+  .mlog-tv--modal .mlog-tv__panel, .mlog-tv--modal .mlog-tv__panel--wide { width: 100vw; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .mlog-tv--modal .mlog-tv__panel .mlog-detail__media { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; margin: 0; }
+  .mlog-tv--modal .mlog-tv__panel .mlog-detail__media--gone, .mlog-tv--modal .mlog-tv__panel .mlog-detail__media--empty { height: auto; max-width: 86vw; padding: 1.2rem; border-radius: 12px; }
+  .mlog-tv--modal .mlog-tv__ctl { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+}
