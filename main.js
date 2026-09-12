@@ -1523,7 +1523,7 @@ var require_sifi = __commonJS({
           this.paintWatched = () => watched.classList.toggle("mlog-tv__btn--active", !!item.watched);
           btn(row1, "Tags", "tag", () => this.openTags(item), !!(item.tags && item.tags.length));
           row1.createDiv({ cls: "mlog-tv__spacer" });
-          btn(row1, "Close", "x", () => this.close());
+          if (!this.modal) btn(row1, "Close", "x", () => this.close());
           const row2 = ctl.createDiv({ cls: "mlog-tv__row" });
           if (this.modal) {
             if (item.sourceUrl) btn(row2, "Open source", "external-link", () => window.open(item.sourceUrl, "_blank"));

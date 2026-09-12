@@ -1056,7 +1056,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.paintWatched = () => watched.classList.toggle("mlog-tv__btn--active", !!item.watched);
       btn(row1, "Tags", "tag", () => this.openTags(item), !!(item.tags && item.tags.length));
       row1.createDiv({ cls: "mlog-tv__spacer" });
-      btn(row1, "Close", "x", () => this.close());
+      if (!this.modal) btn(row1, "Close", "x", () => this.close()); // the pop-up has its corner ×; the row stays one line on a phone
 
       const row2 = ctl.createDiv({ cls: "mlog-tv__row" });
       if (this.modal) {
