@@ -45,6 +45,10 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.11 — 2026-09-11
+
+- The bar's drawer/modal check is by geometry (on screen or not), not class names: on the phone the is-collapsed test read "open" with the drawer closed. Same fix in the shared tab bar (v6.2).
+
 ### 1.4.0-sifi.10 — 2026-09-11
 
 - The tag sheet keeps itself above the phone keyboard (visual viewport), so the field and the chips stay visible while typing.

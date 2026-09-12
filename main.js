@@ -1790,7 +1790,7 @@ var require_sifi = __commonJS({
           try {
             this.mo = new MutationObserver(() => this.cover());
             this.mo.observe(document.body, { childList: true });
-            document.querySelectorAll(".workspace-drawer").forEach((d) => this.mo.observe(d, { attributes: true, attributeFilter: ["class"] }));
+            document.querySelectorAll(".workspace-drawer").forEach((d) => this.mo.observe(d, { attributes: true, attributeFilter: ["class", "style"] }));
           } catch {
             this.mo = null;
           }
@@ -1803,9 +1803,17 @@ var require_sifi = __commonJS({
             this.cover();
           }, 1e3);
         }
+        // Judged by geometry, never by class names alone (the first cut keyed on
+        // is-collapsed and read "open" with the drawer closed): a closed drawer sits
+        // off-screen, and only a modal with a box counts.
         covered() {
-          if (document.body.querySelector(":scope > .modal-container")) return true;
-          return Array.from(document.querySelectorAll(".workspace-drawer")).some((d) => !d.classList.contains("is-collapsed"));
+          const onScreen = (el) => {
+            if (!el || !el.getBoundingClientRect) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+          };
+          if (Array.from(document.body.querySelectorAll(":scope > .modal-container .modal")).some(onScreen)) return true;
+          return Array.from(document.querySelectorAll(".workspace-drawer")).some((d) => !d.classList.contains("is-collapsed") && onScreen(d));
         }
         cover() {
           if (this.el) this.el.classList.toggle("mlog-bar--covered", this.covered());
