@@ -634,6 +634,7 @@ var require_sifi = __commonJS({
       // the tags used last, newest first — they lead the sheet
     };
     var RECENT_TAGS_MAX = 8;
+    var META_BUDGET_MS = 4e3;
     var THUMB_LIVE_MAX = 24;
     var WATCH_DWELL_MS = 3e3;
     var TICK_MS = 500;
@@ -1373,6 +1374,41 @@ var require_sifi = __commonJS({
           };
           tick();
         });
+      }
+      function fetchMetaFast(plugin, url, extractMeta2) {
+        const request = Promise.resolve().then(() => requestUrl2({ url, method: "GET", throw: false })).catch(() => null);
+        let timer = null;
+        const timeout = new Promise((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), META_BUDGET_MS);
+        });
+        return Promise.race([request, timeout]).then((r) => {
+          if (r !== "timeout") {
+            clearTimeout(timer);
+            return r;
+          }
+          request.then((resp) => patchLateTitle(plugin, url, resp, extractMeta2)).catch(() => {
+          });
+          return null;
+        });
+      }
+      async function patchLateTitle(plugin, url, resp, extractMeta2) {
+        try {
+          if (!resp || resp.status >= 400 || typeof resp.text !== "string" || typeof extractMeta2 !== "function") return;
+          const meta = extractMeta2(resp.text) || {};
+          const title = browse2.captureFallbackTitle(url, String(meta.title || "").trim());
+          if (!title || title === url) return;
+          const items = await plugin.listItems();
+          const item = items.find((i) => i.sourceUrl === url);
+          if (!item || !item.file) return;
+          const fallback = browse2.captureFallbackTitle(url, "");
+          if (item.title !== fallback && item.title !== url) return;
+          await plugin.app.fileManager.processFrontMatter(item.file, (fm) => {
+            fm.title = title;
+            if (meta.siteName && (!fm.creator || fm.creator === "")) fm.creator = meta.siteName;
+          });
+        } catch (e) {
+          console.error("Media Log: late title patch failed", e);
+        }
       }
       async function afterCapture(plugin, file) {
         if (!file || plugin.settings.tagAfterCapture === false) return;
@@ -2630,6 +2666,8 @@ var require_sifi = __commonJS({
         TagSheetModal,
         decorateAddModal,
         afterCapture,
+        fetchMetaFast,
+        patchLateTitle,
         loadCaptions,
         keepOne,
         thumbSrc,
@@ -3212,8 +3250,8 @@ var AddItemModal = class extends Modal {
       status.setText("Fetching page metadata\u2026");
       let meta = { title: "", image: "", siteName: "", description: "" };
       try {
-        const resp = await requestUrl({ url, method: "GET", throw: false });
-        if (resp.status < 400 && typeof resp.text === "string") meta = extractMeta(resp.text);
+        const resp = await sifi.fetchMetaFast(this.plugin, url, extractMeta);
+        if (resp && resp.status < 400 && typeof resp.text === "string") meta = extractMeta(resp.text);
       } catch {
       }
       status.setText("Creating item\u2026");

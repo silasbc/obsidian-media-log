@@ -634,8 +634,8 @@ class AddItemModal extends Modal {
       status.setText("Fetching page metadata…");
       let meta = { title: "", image: "", siteName: "", description: "" };
       try {
-        const resp = await requestUrl({ url, method: "GET", throw: false });
-        if (resp.status < 400 && typeof resp.text === "string") meta = extractMeta(resp.text);
+        const resp = await sifi.fetchMetaFast(this.plugin, url, extractMeta); // [sifi] a few seconds, then save without it
+        if (resp && resp.status < 400 && typeof resp.text === "string") meta = extractMeta(resp.text);
       } catch {}
       status.setText("Creating item…");
       try {

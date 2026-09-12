@@ -40,6 +40,7 @@ const SIFI_DEFAULTS = {
   recentTags: [], // the tags used last, newest first — they lead the sheet
 };
 const RECENT_TAGS_MAX = 8;
+const META_BUDGET_MS = 4000; // a share-sheet save waits this long for the page's title, then saves without it
 const THUMB_LIVE_MAX = 24;
 const WATCH_DWELL_MS = 3000;
 const TICK_MS = 500;
@@ -885,6 +886,52 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       };
       tick();
     });
+  }
+
+  // Upstream's Add dialog fetches the page for its title before saving. From the
+  // phone, Instagram's page can take a very long time (owner 2026-09-11: "it
+  // fills the link but doesn't go from there … took a hot min"), and the tag
+  // sheet only comes after the save. Wait a few seconds at most; on a timeout
+  // the save goes ahead with the fallback title, and when the page does answer
+  // the real title is patched into the note in the background.
+  function fetchMetaFast(plugin, url, extractMeta) {
+    const request = Promise.resolve()
+      .then(() => requestUrl({ url, method: "GET", throw: false }))
+      .catch(() => null);
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), META_BUDGET_MS);
+    });
+    return Promise.race([request, timeout]).then((r) => {
+      if (r !== "timeout") {
+        clearTimeout(timer);
+        return r;
+      }
+      request.then((resp) => patchLateTitle(plugin, url, resp, extractMeta)).catch(() => {});
+      return null;
+    });
+  }
+
+  // The page answered after the note was written: give the note its real title
+  // (and creator) if it still carries the fallback one.
+  async function patchLateTitle(plugin, url, resp, extractMeta) {
+    try {
+      if (!resp || resp.status >= 400 || typeof resp.text !== "string" || typeof extractMeta !== "function") return;
+      const meta = extractMeta(resp.text) || {};
+      const title = browse.captureFallbackTitle(url, String(meta.title || "").trim());
+      if (!title || title === url) return;
+      const items = await plugin.listItems();
+      const item = items.find((i) => i.sourceUrl === url);
+      if (!item || !item.file) return;
+      const fallback = browse.captureFallbackTitle(url, "");
+      if (item.title !== fallback && item.title !== url) return; // already has a real title
+      await plugin.app.fileManager.processFrontMatter(item.file, (fm) => {
+        fm.title = title;
+        if (meta.siteName && (!fm.creator || fm.creator === "")) fm.creator = meta.siteName;
+      });
+    } catch (e) {
+      console.error("Media Log: late title patch failed", e);
+    }
   }
 
   // A share-sheet save just landed (owner 2026-09-11: tag at the time of
@@ -2283,6 +2330,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     TagSheetModal,
     decorateAddModal,
     afterCapture,
+    fetchMetaFast,
+    patchLateTitle,
     loadCaptions,
     keepOne,
     thumbSrc,

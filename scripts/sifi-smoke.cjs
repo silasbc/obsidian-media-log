@@ -190,7 +190,7 @@ const app = {
   // 1.4.0-sifi.13: tags at import
   assert.equal(plugin.settings.tagAfterCapture, true, "share-sheet saves ask for tags by default");
   assert.deepEqual(Array.from(plugin.settings.recentTags), [], "no recent tags to start");
-  for (const m of ["buildTagSheet", "decorateAddModal", "afterCapture"]) assert.equal(typeof MediaLogPlugin.sifi[m], "function", `sifi.${m} exists`);
+  for (const m of ["buildTagSheet", "decorateAddModal", "afterCapture", "fetchMetaFast", "patchLateTitle"]) assert.equal(typeof MediaLogPlugin.sifi[m], "function", `sifi.${m} exists`);
   assert.equal(typeof MediaLogPlugin.sifi.TagSheetModal, "function");
   assert.equal(typeof view.openForTags, "function", "the view can open an item for tagging");
   plugin.settings.tagAfterCapture = false;
