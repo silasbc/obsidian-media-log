@@ -597,3 +597,16 @@ test("orderTags / pushRecent: recently used tags lead, the rest keep count order
   assert.deepEqual(b.pushRecent(["a", "b", "c"], "d", 3), ["d", "a", "b"], "capped");
   assert.deepEqual(b.pushRecent(["a"], "  "), ["a"], "blank changes nothing");
 });
+
+test("cleanTitle / captureEnrich: a caption-style og:title becomes one safe line", () => {
+  const raw = 'Funded info on Instagram: "Follow for daily memes\n\nThe yield curve is a graph\tthat shows\\ rates"';
+  assert.equal(b.cleanTitle(raw), 'Funded info on Instagram: "Follow for daily memes The yield curve is a graph that shows rates"');
+  assert.equal(b.cleanTitle("  plain  "), "plain");
+  assert.equal(b.cleanTitle(null), "");
+  const long = "x".repeat(500);
+  assert.equal(b.cleanTitle(long).length, 200, "capped with an ellipsis");
+  assert.ok(b.cleanTitle(long).endsWith("…"));
+  const e = b.captureEnrich("https://www.instagram.com/reel/ABC/", "Line one\nLine two");
+  assert.equal(e.title, "Line one Line two", "the enriched title is one line");
+  assert.equal(b.captureEnrich("https://www.instagram.com/reel/ABC/", "Log in\n• Instagram").title, "Instagram Reel ABC", "a multi-line login wall still falls back");
+});

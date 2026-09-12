@@ -582,11 +582,23 @@ function captureFallbackTitle(url, title) {
 
 // One call for the Add-item flow: kind, embed_url, and the resolved title,
 // from the url and whatever title the fetch (or the operator) produced.
+// A page title safe for a one-line double-quoted YAML scalar: line breaks and
+// runs of whitespace collapse to one space, control characters and backslashes
+// go (upstream's yamlEscape only escapes quotes), and very long captions are
+// cut. Instagram's og:title carries the whole caption, newlines included — a
+// raw write made the note unreadable to Obsidian (owner's phone, 2026-09-11).
+function cleanTitle(raw, max) {
+  const cap = max > 0 ? max : 200;
+  let t = safeStr(raw).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "").replace(/\s+/g, " ").trim();
+  if (t.length > cap) t = t.slice(0, cap - 1).trimEnd() + "…";
+  return t;
+}
+
 function captureEnrich(url, title) {
   return {
     kind: captureKindOf(url),
     embedUrl: captureEmbedUrl(url),
-    title: captureFallbackTitle(url, title) || safeStr(title),
+    title: cleanTitle(captureFallbackTitle(url, cleanTitle(title)) || title),
   };
 }
 
@@ -797,6 +809,7 @@ module.exports = {
   isInstagramLoginWall,
   captureFallbackTitle,
   captureEnrich,
+  cleanTitle,
   swipeIntent,
   normalizeTag,
   hasTag,

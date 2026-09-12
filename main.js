@@ -419,11 +419,17 @@ var require_browse = __commonJS({
       const label = { reel: "Reel", post: "Post", video: "Video" }[ig.kind];
       return `Instagram ${label} ${ig.code}`;
     }
+    function cleanTitle(raw, max) {
+      const cap = max > 0 ? max : 200;
+      let t = safeStr(raw).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\\/g, "").replace(/\s+/g, " ").trim();
+      if (t.length > cap) t = t.slice(0, cap - 1).trimEnd() + "\u2026";
+      return t;
+    }
     function captureEnrich(url, title) {
       return {
         kind: captureKindOf(url),
         embedUrl: captureEmbedUrl(url),
-        title: captureFallbackTitle(url, title) || safeStr(title)
+        title: cleanTitle(captureFallbackTitle(url, cleanTitle(title)) || title)
       };
     }
     function hashtagsOf(text) {
@@ -597,6 +603,7 @@ var require_browse = __commonJS({
       isInstagramLoginWall,
       captureFallbackTitle,
       captureEnrich,
+      cleanTitle,
       swipeIntent,
       normalizeTag,
       hasTag,
@@ -1395,7 +1402,7 @@ var require_sifi = __commonJS({
         try {
           if (!resp || resp.status >= 400 || typeof resp.text !== "string" || typeof extractMeta2 !== "function") return;
           const meta = extractMeta2(resp.text) || {};
-          const title = browse2.captureFallbackTitle(url, String(meta.title || "").trim());
+          const title = browse2.cleanTitle(browse2.captureFallbackTitle(url, browse2.cleanTitle(meta.title)));
           if (!title || title === url) return;
           const items = await plugin.listItems();
           const item = items.find((i) => i.sourceUrl === url);

@@ -918,7 +918,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     try {
       if (!resp || resp.status >= 400 || typeof resp.text !== "string" || typeof extractMeta !== "function") return;
       const meta = extractMeta(resp.text) || {};
-      const title = browse.captureFallbackTitle(url, String(meta.title || "").trim());
+      const title = browse.cleanTitle(browse.captureFallbackTitle(url, browse.cleanTitle(meta.title)));
       if (!title || title === url) return;
       const items = await plugin.listItems();
       const item = items.find((i) => i.sourceUrl === url);

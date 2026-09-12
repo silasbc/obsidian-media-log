@@ -47,6 +47,10 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.17 — 2026-09-11
+
+- Titles are cleaned at capture (`cleanTitle`: line breaks and whitespace runs → one space, control characters and backslashes dropped, 200-character cap). Instagram's og:title carries the whole caption with newlines; written raw into a double-quoted YAML scalar it made the note unreadable to Obsidian — no index entry, so the tag sheet had nothing to find and tagging the item failed with "Missing closing quote". The late title patch cleans the same way.
+
 ### 1.4.0-sifi.16 — 2026-09-11
 
 - After a share-sheet save, the tag sheet no longer depends on Obsidian's metadata index having seen the new note (on the phone it can lag by seconds and the sheet silently never opened): the note is read directly when the index lags, and every remaining failure says so in a Notice.
