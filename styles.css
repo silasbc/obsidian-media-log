@@ -144,7 +144,7 @@
 .mlog-tag--on { background: var(--interactive-accent); color: var(--text-on-accent); }
 .mlog__pager button { min-width: 2.2em; }
 .mlog-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; justify-content: space-around; align-items: stretch; background: rgba(28, 28, 30, 0.92); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-top: 1px solid #38383a; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif; }
-.mlog-bar--hidden { display: none; }
+.mlog-bar--hidden, .mlog-bar--covered { display: none; } /* --covered: a drawer or modal owns the bottom of the screen */
 .mlog-bar__slot { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; box-shadow: none; cursor: pointer; min-width: 52px; min-height: 48px; padding: 4px 8px 2px; color: #8e8e93; }
 .mlog-bar__slot--on { color: #0a84ff; }
 .mlog-bar__icon, .mlog-bar__icon svg { width: 20px; height: 20px; }
@@ -212,3 +212,5 @@
   .mlog-tv--modal .mlog-tv__panel .mlog-detail__media--gone, .mlog-tv--modal .mlog-tv__panel .mlog-detail__media--empty { height: auto; max-width: 86vw; padding: 1.2rem; border-radius: 12px; }
   .mlog-tv--modal .mlog-tv__ctl { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
 }
+.mlog-tv__btn--del { color: #ff6b6b; }
+.mlog-tv__btn--danger { background: #e0405a; color: #fff; }

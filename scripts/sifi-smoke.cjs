@@ -175,7 +175,7 @@ const app = {
 
   // 1.4.0-sifi.9: the phone pass — the players carry the swipe binding and the tag sheet
   const P = MediaLogPlugin.sifi.TvPlayer.prototype;
-  for (const m of ["bindSwipe", "togglePause", "openTags", "closeTags"]) assert.equal(typeof P[m], "function", `TvPlayer.${m} exists`);
+  for (const m of ["bindSwipe", "togglePause", "openTags", "closeTags", "deleteCurrent"]) assert.equal(typeof P[m], "function", `TvPlayer.${m} exists`);
   assert.equal(modal.hold, false, "a fresh player is not holding (no tag sheet open)");
   assert.equal(modal.sheet, null);
   assert.equal(modal.media, null, "nothing built until open()");

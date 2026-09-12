@@ -1180,6 +1180,7 @@ var require_sifi = __commonJS({
           this.pre = null;
           this.media = null;
           this.sheet = null;
+          this.sheetUnfit = null;
           this.hold = false;
           this.paintTagLine = null;
           this.swipedAt = 0;
@@ -1533,6 +1534,24 @@ var require_sifi = __commonJS({
                 this.close();
                 this.app.workspace.openLinkText(item.file.path, "", false);
               });
+              const del = btn(row2, "Delete", "trash-2", () => {
+                if (!del._armed) {
+                  del._armed = true;
+                  del.setText("Delete? Tap again");
+                  del.classList.add("mlog-tv__btn--danger");
+                  del._disarm = setTimeout(() => {
+                    if (!del.isConnected) return;
+                    del._armed = false;
+                    del.empty();
+                    setIcon2(del, "trash-2");
+                    del.classList.remove("mlog-tv__btn--danger");
+                  }, 4e3);
+                  return;
+                }
+                clearTimeout(del._disarm);
+                this.deleteCurrent(item);
+              });
+              del.classList.add("mlog-tv__btn--del");
             }
             return;
           }
@@ -1565,6 +1584,27 @@ var require_sifi = __commonJS({
               this.dwell === sec
             );
           }
+        }
+        async deleteCurrent(item) {
+          try {
+            await this.plugin.deleteItem(item);
+          } catch (e) {
+            new Notice2(`Media Log: couldn't delete \u2014 ${e && e.message || e}`);
+            return;
+          }
+          new Notice2("Media Log: item moved to trash");
+          const items = this.view.items || [];
+          const vi = items.findIndex((x) => x && x.id === item.id);
+          if (vi >= 0) items.splice(vi, 1);
+          if (this.view.selected && this.view.selected.id === item.id) this.view.selected = null;
+          const i = this.list.findIndex((x) => x.id === item.id);
+          if (i >= 0) this.list.splice(i, 1);
+          if (!this.overlay) return;
+          if (!this.list.length) {
+            this.close();
+            return;
+          }
+          this.show(Math.min(i >= 0 ? i : this.idx, this.list.length - 1), "up");
         }
         showControls() {
           if (!this.ctl) return;
@@ -1611,6 +1651,23 @@ var require_sifi = __commonJS({
           const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
           const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
           const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
+          const vv = typeof window !== "undefined" ? window.visualViewport : null;
+          if (vv) {
+            const fit = () => {
+              if (this.sheet !== sheet) return;
+              const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+              sheet.style.bottom = kb > 40 ? kb + "px" : "";
+              sheet.style.maxHeight = kb > 40 ? Math.round(vv.height * 0.92) + "px" : "";
+              if (kb > 40 && window.scrollY) window.scrollTo(0, 0);
+            };
+            vv.addEventListener("resize", fit);
+            vv.addEventListener("scroll", fit);
+            this.sheetUnfit = () => {
+              vv.removeEventListener("resize", fit);
+              vv.removeEventListener("scroll", fit);
+            };
+            fit();
+          }
           const paint = () => {
             chips.empty();
             const items = (this.view.items || []).map((x) => x && x.id === item.id ? item : x);
@@ -1660,6 +1717,8 @@ var require_sifi = __commonJS({
           paint();
         }
         closeTags() {
+          if (this.sheetUnfit) this.sheetUnfit();
+          this.sheetUnfit = null;
           if (this.sheet) this.sheet.remove();
           this.sheet = null;
           if (!this.hold) return;
@@ -1671,6 +1730,8 @@ var require_sifi = __commonJS({
         teardown() {
           this.clearTimers();
           this.stopMedia();
+          if (this.sheetUnfit) this.sheetUnfit();
+          this.sheetUnfit = null;
           this.sheet = null;
           this.hold = false;
           this.media = null;
@@ -1703,6 +1764,7 @@ var require_sifi = __commonJS({
           this.view = view;
           this.el = null;
           this.timer = null;
+          this.mo = null;
         }
         wanted() {
           return !!this.view.plugin.settings.bottomBar && (isMobileApp(this.view.app) || isPhone());
@@ -1725,9 +1787,28 @@ var require_sifi = __commonJS({
           }
           this.el = el;
           if (this.view.root) this.view.root.classList.add("mlog--barred");
+          try {
+            this.mo = new MutationObserver(() => this.cover());
+            this.mo.observe(document.body, { childList: true });
+            document.querySelectorAll(".workspace-drawer").forEach((d) => this.mo.observe(d, { attributes: true, attributeFilter: ["class"] }));
+          } catch {
+            this.mo = null;
+          }
+          this.cover();
           this.timer = setInterval(() => {
-            if (!this.visible()) this.unmount();
+            if (!this.visible()) {
+              this.unmount();
+              return;
+            }
+            this.cover();
           }, 1e3);
+        }
+        covered() {
+          if (document.body.querySelector(":scope > .modal-container")) return true;
+          return Array.from(document.querySelectorAll(".workspace-drawer")).some((d) => !d.classList.contains("is-collapsed"));
+        }
+        cover() {
+          if (this.el) this.el.classList.toggle("mlog-bar--covered", this.covered());
         }
         hide(h) {
           if (this.el) this.el.classList.toggle("mlog-bar--hidden", !!h);
@@ -1735,6 +1816,8 @@ var require_sifi = __commonJS({
         unmount() {
           if (this.timer) clearInterval(this.timer);
           this.timer = null;
+          if (this.mo) this.mo.disconnect();
+          this.mo = null;
           if (this.el) this.el.remove();
           this.el = null;
           if (this.view.root) this.view.root.classList.remove("mlog--barred");

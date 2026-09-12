@@ -45,6 +45,12 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.10 — 2026-09-11
+
+- The tag sheet keeps itself above the phone keyboard (visual viewport), so the field and the chips stay visible while typing.
+- Delete from the phone pop-up: a trash button in the second row; the first tap arms it ("Delete? Tap again", 4s), the second trashes the note through Obsidian's reversible trash and the player moves on.
+- The phone bottom bar steps aside while an Obsidian drawer is open or a modal (Settings) is up — it had covered the Settings gear at the bottom of the left drawer. Drawer class changes and body children are observed; the 1s self-check re-applies the rule. The shared note-surface tab bar got the same fix (tab bar v6.2, select repo).
+
 ### 1.4.0-sifi.9 — 2026-09-11
 
 - The phone pass: the pop-up fills the screen and a vertical flick steps through the reels (finger-follow, rubber band at the ends, slide-in), tap pauses, a corner × closes. Tags inside the players: tap-to-toggle chips with counts + a New tag field, writing `tags` the way the pane does; the reel holds still while the sheet is up. Phone toolbar and tag chips scroll in one line each; the grid is two columns (was one 170px column). Keyboard: Up/Down step like Left/Right; Escape closes the sheet before the player. Smoke fixture: the fake CDN link's `oe=` had expired on 2026-09-07, pinned to 2038.

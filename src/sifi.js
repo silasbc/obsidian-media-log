@@ -699,6 +699,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.pre = null; // the next reel, fetched ahead so auto-advance is instant
       this.media = null; // what show() built for the current item
       this.sheet = null; // the tag sheet while it is open
+      this.sheetUnfit = null; // detaches the keyboard-fit listeners
       this.hold = false; // tag sheet open: no auto-advance, no fade, no swipes
       this.paintTagLine = null;
       this.swipedAt = 0; // a click right after a flick is the flick's echo, not a tap
@@ -1069,6 +1070,27 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
             this.close();
             this.app.workspace.openLinkText(item.file.path, "", false);
           });
+          // Delete from the phone (owner 2026-09-11). Two taps: the first arms the button for a
+          // few seconds, the second trashes the note through Obsidian's reversible trash, the
+          // same as the desktop pane's Delete. The player moves on to the next item.
+          const del = btn(row2, "Delete", "trash-2", () => {
+            if (!del._armed) {
+              del._armed = true;
+              del.setText("Delete? Tap again");
+              del.classList.add("mlog-tv__btn--danger");
+              del._disarm = setTimeout(() => {
+                if (!del.isConnected) return;
+                del._armed = false;
+                del.empty();
+                setIcon(del, "trash-2");
+                del.classList.remove("mlog-tv__btn--danger");
+              }, 4000);
+              return;
+            }
+            clearTimeout(del._disarm);
+            this.deleteCurrent(item);
+          });
+          del.classList.add("mlog-tv__btn--del");
         }
         return;
       }
@@ -1102,6 +1124,28 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           this.dwell === sec
         );
       }
+    }
+
+    async deleteCurrent(item) {
+      try {
+        await this.plugin.deleteItem(item);
+      } catch (e) {
+        new Notice(`Media Log: couldn't delete — ${(e && e.message) || e}`);
+        return;
+      }
+      new Notice("Media Log: item moved to trash");
+      const items = this.view.items || [];
+      const vi = items.findIndex((x) => x && x.id === item.id);
+      if (vi >= 0) items.splice(vi, 1);
+      if (this.view.selected && this.view.selected.id === item.id) this.view.selected = null;
+      const i = this.list.findIndex((x) => x.id === item.id);
+      if (i >= 0) this.list.splice(i, 1);
+      if (!this.overlay) return;
+      if (!this.list.length) {
+        this.close();
+        return;
+      }
+      this.show(Math.min(i >= 0 ? i : this.idx, this.list.length - 1), "up");
     }
 
     showControls() {
@@ -1150,6 +1194,26 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
       const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
       const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
+      // The phone keyboard covers the bottom of the screen, sheet included (owner
+      // 2026-09-11: "cant see what i am typing once my keyboard pops up"). iOS reports
+      // the keyboard through the visual viewport: keep the sheet just above it.
+      const vv = typeof window !== "undefined" ? window.visualViewport : null;
+      if (vv) {
+        const fit = () => {
+          if (this.sheet !== sheet) return;
+          const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+          sheet.style.bottom = kb > 40 ? kb + "px" : "";
+          sheet.style.maxHeight = kb > 40 ? Math.round(vv.height * 0.92) + "px" : "";
+          if (kb > 40 && window.scrollY) window.scrollTo(0, 0); // iOS nudges the page under a focused field; keep the overlay put
+        };
+        vv.addEventListener("resize", fit);
+        vv.addEventListener("scroll", fit);
+        this.sheetUnfit = () => {
+          vv.removeEventListener("resize", fit);
+          vv.removeEventListener("scroll", fit);
+        };
+        fit();
+      }
 
       const paint = () => {
         chips.empty();
@@ -1202,6 +1266,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
 
     closeTags() {
+      if (this.sheetUnfit) this.sheetUnfit();
+      this.sheetUnfit = null;
       if (this.sheet) this.sheet.remove();
       this.sheet = null;
       if (!this.hold) return;
@@ -1214,6 +1280,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     teardown() {
       this.clearTimers();
       this.stopMedia();
+      if (this.sheetUnfit) this.sheetUnfit();
+      this.sheetUnfit = null;
       this.sheet = null;
       this.hold = false;
       this.media = null;
@@ -1254,6 +1322,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.view = view;
       this.el = null;
       this.timer = null;
+      this.mo = null;
     }
 
     wanted() {
@@ -1279,9 +1348,34 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       }
       this.el = el;
       if (this.view.root) this.view.root.classList.add("mlog--barred");
+      // Obsidian mobile keeps its Settings gear at the bottom of the left drawer, and
+      // Settings itself is a modal (owner 2026-09-11: the bar covered the gear). Step
+      // aside while a drawer is open or a modal is up; watch them directly, and let
+      // the 1s self-check re-apply the rule in case an observer misses.
+      try {
+        this.mo = new MutationObserver(() => this.cover());
+        this.mo.observe(document.body, { childList: true });
+        document.querySelectorAll(".workspace-drawer").forEach((d) => this.mo.observe(d, { attributes: true, attributeFilter: ["class"] }));
+      } catch {
+        this.mo = null;
+      }
+      this.cover();
       this.timer = setInterval(() => {
-        if (!this.visible()) this.unmount(); // the library left the screen — a body-mounted bar must not outlive it
+        if (!this.visible()) {
+          this.unmount(); // the library left the screen — a body-mounted bar must not outlive it
+          return;
+        }
+        this.cover();
       }, 1000);
+    }
+
+    covered() {
+      if (document.body.querySelector(":scope > .modal-container")) return true;
+      return Array.from(document.querySelectorAll(".workspace-drawer")).some((d) => !d.classList.contains("is-collapsed"));
+    }
+
+    cover() {
+      if (this.el) this.el.classList.toggle("mlog-bar--covered", this.covered());
     }
 
     hide(h) {
@@ -1291,6 +1385,8 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     unmount() {
       if (this.timer) clearInterval(this.timer);
       this.timer = null;
+      if (this.mo) this.mo.disconnect();
+      this.mo = null;
       if (this.el) this.el.remove();
       this.el = null;
       if (this.view.root) this.view.root.classList.remove("mlog--barred");
