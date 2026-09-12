@@ -33,7 +33,7 @@ Ported from the old Media Library surface (shipped there 2026-08-07/08), now on 
 
 12. **The phone pass** (owner, 2026-09-11: "make the ava tags and everything in media log work on mobile … swipe through them like TikTok or Insta"). The pop-up player is a reel feed: it fills the screen, a vertical flick steps to the next or previous item (the panel follows the finger and rubber-bands at the list's ends; a short, slow, or sideways drag steps nothing, so a tap or a native scrub is never mistaken for a step), a tap on the video pauses and resumes it, and a persistent × in the corner closes it. Tags now work in both players: a Tags button and the item's own tags under the title open a sheet with every tag the library knows as a tap-to-toggle chip with its count, plus a New tag field; each tap writes the note's `tags` exactly as the desktop pane does, and the reel holds still (no auto-advance, no swipes, no fade) until Done. On a phone the toolbar and the tag chips are one thumb-scrollable line each, search is full width, tap targets are 36px or better, and the grid is two real columns (the flex column's `align-items: flex-start` had let it shrink to one 170px column). Pure functions in `src/browse.js` (`swipeIntent`, `normalizeTag`, `hasTag`, `toggleTag`), unit-tested; the player wiring is covered by `scripts/sifi-smoke.cjs`.
 
-13. **Tags at import** (owner, 2026-09-11: "we should have a option to add tags at the time of importing"). A link saved from the share sheet (the `obsidian://media-log?url=…` path) opens the library on the new item with the tag sheet already up — the phone's pop-up, or the desktop pane plus the sheet as a dialog; the item is saved either way. The sheet is one builder now (`buildTagSheet`) shared by the players, the dialog, and the Add item dialog, which gains the same tap-to-toggle chips under its tags field. Recently used tags lead the sheet (`recentTags`, newest first, capped at eight, a setting — no note writes). Setting "Ask for tags after a share-sheet save", default on. Three more one-line hooks in `src/main.js`: the protocol handler's `onDone`, the created file passed to `onDone`, and the Add dialog's chips. Pure functions `orderTags`, `pushRecent` in `src/browse.js`, unit-tested.
+13. **Tags at import** (owner, 2026-09-11: "we should have a option to add tags at the time of importing"). A link saved from the share sheet (the `obsidian://media-log?url=…` path) opens the tag sheet for the new item as an Obsidian modal once the layout has settled — on every device; a modal survives the workspace rebuild Obsidian mobile does after a share-sheet launch, which tore the first cut's pop-up down in a second. "Open it in the library" jumps to the item. The item is saved either way. The sheet is one builder now (`buildTagSheet`) shared by the players, the dialog, and the Add item dialog, which gains the same tap-to-toggle chips under its tags field. Recently used tags lead the sheet (`recentTags`, newest first, capped at eight, a setting — no note writes). Setting "Ask for tags after a share-sheet save", default on. Three more one-line hooks in `src/main.js`: the protocol handler's `onDone`, the created file passed to `onDone`, and the Add dialog's chips. Pure functions `orderTags`, `pushRecent` in `src/browse.js`, unit-tested.
 
 Settings under "Sifi's edition": items per page, portrait cards, TV dwell seconds, and the duplicate-scan log path.
 
@@ -47,9 +47,13 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.14 — 2026-09-11
+
+- Tags at import, second cut: the sheet after a share-sheet save is an Obsidian modal on every device, opened once the layout settles. The first cut opened the library's pop-up and Obsidian mobile's post-launch workspace rebuild tore it down in a second (owner: "it popped down too fast for me to enter tags"). "Open it in the library" jumps to the item.
+
 ### 1.4.0-sifi.13 — 2026-09-11
 
-- Tags at import: a share-sheet save opens the new item with the tag sheet up (phone pop-up / desktop dialog); recently used tags lead the sheet; the Add item dialog gets tap-to-toggle chips; setting "Ask for tags after a share-sheet save" (on). See feature 13.
+- Tags at import: a share-sheet save opens the tag sheet for the new item as a modal, after the layout settles ("Open it in the library" jumps to it); recently used tags lead the sheet; the Add item dialog gets tap-to-toggle chips; setting "Ask for tags after a share-sheet save" (on). See feature 13.
 
 ### 1.4.0-sifi.12 — 2026-09-11
 

@@ -708,7 +708,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     const paint = () => {
       chips.empty();
       // Counts across the library, with this item's live tags in place of its listed copy.
-      const items = ((o.view && o.view.items) || o.items || []).map((x) => (x && x.id === item.id ? item : x));
+      const items = ((o.view && o.view.items && o.view.items.length ? o.view.items : o.items) || []).map((x) => (x && x.id === item.id ? item : x));
       const uni = browse.orderTags(browse.tagUniverse(items), plugin.settings.recentTags);
       hint.setText(uni.length ? "Tap a tag to add or remove it. Counts are across the library; the ones you used last come first." : "No tags yet — type one above. Your own categories, not hashtags.");
       for (const u of uni) {
@@ -774,37 +774,69 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     return { el: sheet, input, repaint: paint };
   }
 
-  // The desktop's sheet after a share-sheet save: the same builder inside a modal.
+  // The sheet after a share-sheet save, on every device: the same builder inside
+  // an Obsidian modal. A modal lives outside the workspace, so the layout
+  // rebuild Obsidian mobile does right after a share-sheet launch cannot tear it
+  // down (the first cut opened the library's pop-up and the sheet was gone in a
+  // second — owner: "it popped down too fast for me to enter tags").
   class TagSheetModal extends Modal {
-    constructor(app, plugin, view, item) {
+    constructor(app, plugin, view, item, items) {
       super(app);
       this.plugin = plugin;
-      this.view = view;
+      this.view = view || null;
       this.item = item;
+      this.items = items || null;
     }
 
     onOpen() {
       if (this.modalEl) this.modalEl.addClass("mlog-tagsheet");
-      if (this.titleEl) this.titleEl.setText("Tags for the new item");
-      this.contentEl.empty();
-      this.contentEl.createDiv({ cls: "mlog__empty-sub", text: this.item.title });
-      const built = buildTagSheet(this.contentEl, {
+      if (this.titleEl) this.titleEl.setText("Saved — tag it?");
+      const c = this.contentEl;
+      c.empty();
+      c.createDiv({ cls: "mlog-tagsheet__title", text: this.item.title });
+      const meta = [this.item.platform, this.item.creator && this.item.creator !== this.item.platform ? this.item.creator : ""].filter(Boolean).join(" · ");
+      if (meta) c.createDiv({ cls: "mlog__empty-sub", text: meta });
+      const built = buildTagSheet(c, {
         app: this.app,
         plugin: this.plugin,
         view: this.view,
+        items: this.items,
         item: this.item,
         mode: "modal",
         onDone: () => this.close(),
       });
-      setTimeout(() => built.input.focus(), 50);
+      const row = c.createDiv({ cls: "mlog-modal__row mlog-tagsheet__row" });
+      const open = row.createEl("button", { text: "Open it in the library" });
+      open.addEventListener("click", async () => {
+        this.close();
+        try {
+          await this.plugin.activateView();
+          const leaf = this.app.workspace.getLeavesOfType("media-log-library")[0];
+          const view = leaf && leaf.view;
+          if (!view) return;
+          await view.refreshItems();
+          const it = (view.items || []).find((i) => i.id === this.item.id) || this.item;
+          if (isPhone()) view.openModal(it);
+          else await view.selectItem(it);
+        } catch (e) {
+          console.error("Media Log: open after tagging failed", e);
+        }
+      });
+      setTimeout(() => {
+        try {
+          built.input.focus();
+        } catch {}
+      }, 80);
     }
 
     onClose() {
       this.contentEl.empty();
-      if (this.view && this.view.gridEl) {
-        withScrollKept(this.view.gridEl, () => {
-          this.view.renderGrid();
-          this.view.renderDetail();
+      const leaf = this.app.workspace.getLeavesOfType("media-log-library")[0];
+      const view = (leaf && leaf.view) || this.view;
+      if (view && view.gridEl && view.gridEl.isConnected) {
+        withScrollKept(view.gridEl, () => {
+          view.renderGrid();
+          if (typeof view.renderDetail === "function") view.renderDetail();
         });
       }
     }
@@ -856,25 +888,22 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
   }
 
   // A share-sheet save just landed (owner 2026-09-11: tag at the time of
-  // importing): open the library on the new item with the tag sheet up — the
-  // phone's pop-up, the desktop's pane plus a dialog. The item is saved either
-  // way; the sheet is optional. Setting "Ask for tags after a share-sheet save".
+  // importing): once the workspace has settled, open the tag sheet for the new
+  // item as a modal — no dependence on the library view, which Obsidian mobile
+  // may rebuild right after a share-sheet launch. The item is saved either way;
+  // the sheet is optional. Setting "Ask for tags after a share-sheet save".
   async function afterCapture(plugin, file) {
     if (!file || plugin.settings.tagAfterCapture === false) return;
     try {
-      await plugin.activateView();
-      const leaf = plugin.app.workspace.getLeavesOfType("media-log-library")[0];
-      const view = leaf && leaf.view;
-      if (!view || typeof view.openForTags !== "function") return;
       await waitForCache(plugin.app, file, 4000);
-      const find = () => (view.items || []).find((i) => i.file && i.file.path === file.path);
-      let item = find();
-      if (!item) {
-        await view.refreshItems();
-        item = find();
-      }
+      const items = await plugin.listItems();
+      const item = items.find((i) => i.file && i.file.path === file.path);
       if (!item) return;
-      await view.openForTags(item);
+      const leaf = plugin.app.workspace.getLeavesOfType("media-log-library")[0];
+      const view = (leaf && leaf.view) || null;
+      const open = () => setTimeout(() => new TagSheetModal(plugin.app, plugin, view, item, items).open(), 350);
+      if (typeof plugin.app.workspace.onLayoutReady === "function") plugin.app.workspace.onLayoutReady(open);
+      else open();
     } catch (e) {
       console.error("Media Log: after-capture tagging failed", e);
     }
