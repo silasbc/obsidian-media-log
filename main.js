@@ -1180,7 +1180,6 @@ var require_sifi = __commonJS({
           this.pre = null;
           this.media = null;
           this.sheet = null;
-          this.sheetUnfit = null;
           this.hold = false;
           this.paintTagLine = null;
           this.swipedAt = 0;
@@ -1651,23 +1650,12 @@ var require_sifi = __commonJS({
           const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
           const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
           const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
-          const vv = typeof window !== "undefined" ? window.visualViewport : null;
-          if (vv) {
-            const fit = () => {
-              if (this.sheet !== sheet) return;
-              const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-              sheet.style.bottom = kb > 40 ? kb + "px" : "";
-              sheet.style.maxHeight = kb > 40 ? Math.round(vv.height * 0.92) + "px" : "";
-              if (kb > 40 && window.scrollY) window.scrollTo(0, 0);
-            };
-            vv.addEventListener("resize", fit);
-            vv.addEventListener("scroll", fit);
-            this.sheetUnfit = () => {
-              vv.removeEventListener("resize", fit);
-              vv.removeEventListener("scroll", fit);
-            };
-            fit();
-          }
+          if (isPhone()) sheet.classList.add("mlog-tv__sheet--top");
+          input.addEventListener("focus", () => {
+            setTimeout(() => {
+              if (window.scrollY) window.scrollTo(0, 0);
+            }, 60);
+          });
           const paint = () => {
             chips.empty();
             const items = (this.view.items || []).map((x) => x && x.id === item.id ? item : x);
@@ -1717,8 +1705,6 @@ var require_sifi = __commonJS({
           paint();
         }
         closeTags() {
-          if (this.sheetUnfit) this.sheetUnfit();
-          this.sheetUnfit = null;
           if (this.sheet) this.sheet.remove();
           this.sheet = null;
           if (!this.hold) return;
@@ -1730,8 +1716,6 @@ var require_sifi = __commonJS({
         teardown() {
           this.clearTimers();
           this.stopMedia();
-          if (this.sheetUnfit) this.sheetUnfit();
-          this.sheetUnfit = null;
           this.sheet = null;
           this.hold = false;
           this.media = null;

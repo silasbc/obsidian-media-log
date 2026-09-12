@@ -45,13 +45,17 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.12 — 2026-09-11
+
+- The phone's tag sheet hangs from the top of the screen. The sifi.10 visual-viewport approach did nothing inside Obsidian's iOS webview (owner: "the keyboard perfectly covers the tag screen"); at the top no keyboard reaches it. Desktop TV mode keeps the bottom sheet.
+
 ### 1.4.0-sifi.11 — 2026-09-11
 
 - The bar's drawer/modal check is by geometry (on screen or not), not class names: on the phone the is-collapsed test read "open" with the drawer closed. Same fix in the shared tab bar (v6.2).
 
 ### 1.4.0-sifi.10 — 2026-09-11
 
-- The tag sheet keeps itself above the phone keyboard (visual viewport), so the field and the chips stay visible while typing.
+- (Superseded in sifi.12) The tag sheet tried to follow the visual viewport above the keyboard.
 - Delete from the phone pop-up: a trash button in the second row; the first tap arms it ("Delete? Tap again", 4s), the second trashes the note through Obsidian's reversible trash and the player moves on.
 - The phone bottom bar steps aside while an Obsidian drawer is open or a modal (Settings) is up — it had covered the Settings gear at the bottom of the left drawer. Drawer class changes and body children are observed; the 1s self-check re-applies the rule. The shared note-surface tab bar got the same fix (tab bar v6.2, select repo).
 

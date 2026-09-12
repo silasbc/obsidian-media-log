@@ -699,7 +699,6 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.pre = null; // the next reel, fetched ahead so auto-advance is instant
       this.media = null; // what show() built for the current item
       this.sheet = null; // the tag sheet while it is open
-      this.sheetUnfit = null; // detaches the keyboard-fit listeners
       this.hold = false; // tag sheet open: no auto-advance, no fade, no swipes
       this.paintTagLine = null;
       this.swipedAt = 0; // a click right after a flick is the flick's echo, not a tap
@@ -1195,26 +1194,17 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
       const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
       // The phone keyboard covers the bottom of the screen, sheet included (owner
-      // 2026-09-11: "cant see what i am typing once my keyboard pops up"). iOS reports
-      // the keyboard through the visual viewport: keep the sheet just above it.
-      const vv = typeof window !== "undefined" ? window.visualViewport : null;
-      if (vv) {
-        const fit = () => {
-          if (this.sheet !== sheet) return;
-          const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-          sheet.style.bottom = kb > 40 ? kb + "px" : "";
-          sheet.style.maxHeight = kb > 40 ? Math.round(vv.height * 0.92) + "px" : "";
-          if (kb > 40 && window.scrollY) window.scrollTo(0, 0); // iOS nudges the page under a focused field; keep the overlay put
-        };
-        vv.addEventListener("resize", fit);
-        vv.addEventListener("scroll", fit);
-        this.sheetUnfit = () => {
-          vv.removeEventListener("resize", fit);
-          vv.removeEventListener("scroll", fit);
-        };
-        fit();
-      }
-
+      // 2026-09-11: "the keyboard perfectly covers the tag screen"). Obsidian's iOS
+      // webview gives no usable viewport signal when the keyboard rises, so on a
+      // phone the sheet hangs from the top of the screen instead, where no keyboard
+      // reaches; the reel shows beneath it. Desktop TV mode keeps it at the bottom.
+      if (isPhone()) sheet.classList.add("mlog-tv__sheet--top");
+      input.addEventListener("focus", () => {
+        // iOS may still scroll the page to "reveal" the field; keep the overlay put
+        setTimeout(() => {
+          if (window.scrollY) window.scrollTo(0, 0);
+        }, 60);
+      });
       const paint = () => {
         chips.empty();
         // Counts across the library, with this item's live tags in place of its listed copy.
@@ -1266,8 +1256,6 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     }
 
     closeTags() {
-      if (this.sheetUnfit) this.sheetUnfit();
-      this.sheetUnfit = null;
       if (this.sheet) this.sheet.remove();
       this.sheet = null;
       if (!this.hold) return;
@@ -1280,8 +1268,6 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     teardown() {
       this.clearTimers();
       this.stopMedia();
-      if (this.sheetUnfit) this.sheetUnfit();
-      this.sheetUnfit = null;
       this.sheet = null;
       this.hold = false;
       this.media = null;
