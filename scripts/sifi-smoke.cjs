@@ -187,7 +187,18 @@ const app = {
   modal.closeTags(); // safe with no sheet and no overlay
   assert.equal(modal.hold, false);
 
-  console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search, phone-pass wiring.");
+  // 1.4.0-sifi.13: tags at import
+  assert.equal(plugin.settings.tagAfterCapture, true, "share-sheet saves ask for tags by default");
+  assert.deepEqual(Array.from(plugin.settings.recentTags), [], "no recent tags to start");
+  for (const m of ["buildTagSheet", "decorateAddModal", "afterCapture"]) assert.equal(typeof MediaLogPlugin.sifi[m], "function", `sifi.${m} exists`);
+  assert.equal(typeof MediaLogPlugin.sifi.TagSheetModal, "function");
+  assert.equal(typeof view.openForTags, "function", "the view can open an item for tagging");
+  plugin.settings.tagAfterCapture = false;
+  await MediaLogPlugin.sifi.afterCapture(plugin, { path: "Media Log/Items/x.md" }); // setting off → a no-op, no view needed
+  plugin.settings.tagAfterCapture = true;
+  await MediaLogPlugin.sifi.afterCapture(plugin, null); // nothing created → a no-op
+
+  console.log("Sifi smoke passed: merged defaults, item enrichment, list pipeline, TV list, caption search, phone-pass wiring, tags at import.");
 })().catch((error) => {
   console.error(error);
   process.exit(1);

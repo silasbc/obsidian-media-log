@@ -708,6 +708,32 @@ function toggleTag(tags, raw) {
   return i >= 0 ? list.filter((_, j) => j !== i) : list.concat([t]);
 }
 
+// Recently used tags first (most recent first), then the rest by count. `uni` is
+// tagUniverse() output; `recent` is a list of labels, newest first.
+function orderTags(uni, recent) {
+  const list = (uni || []).slice();
+  const rank = new Map();
+  (recent || []).forEach((t, i) => {
+    const k = safeStr(t).toLowerCase();
+    if (k && !rank.has(k)) rank.set(k, i);
+  });
+  return list.sort((a, b) => {
+    const ra = rank.has(a.key) ? rank.get(a.key) : Infinity;
+    const rb = rank.has(b.key) ? rank.get(b.key) : Infinity;
+    if (ra !== rb) return ra - rb;
+    return b.n - a.n || (a.key < b.key ? -1 : 1);
+  });
+}
+
+// A tag was just used: it moves to the front of the recent list (case-insensitive), capped.
+function pushRecent(recent, tag, max) {
+  const t = normalizeTag(tag);
+  const cap = max > 0 ? max : 8;
+  if (!t) return (recent || []).slice(0, cap);
+  const low = t.toLowerCase();
+  return [t].concat((recent || []).filter((x) => safeStr(x).toLowerCase() !== low)).slice(0, cap);
+}
+
 module.exports = {
   MONTHS,
   SORTS,
@@ -775,4 +801,6 @@ module.exports = {
   normalizeTag,
   hasTag,
   toggleTag,
+  orderTags,
+  pushRecent,
 };

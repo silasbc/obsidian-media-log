@@ -581,3 +581,19 @@ test("normalizeTag / hasTag / toggleTag: hashes and whitespace stripped, case-in
   assert.deepEqual(b.toggleTag(["Bench", null, "undefined"], "x"), ["Bench", "x"], "ghost entries are dropped on the way through");
   assert.deepEqual(two, ["Bench", "meme"], "the input list is never mutated");
 });
+
+test("orderTags / pushRecent: recently used tags lead, the rest keep count order; recent list is capped and deduped", () => {
+  const uni = b.tagUniverse([{ tags: ["Bench"] }, { tags: ["Bench", "Meme"] }, { tags: ["Church"] }, { tags: ["gym"] }]);
+  assert.deepEqual(uni.map((u) => u.label), ["Bench", "Church", "gym", "Meme"], "count desc, alpha ties on the lowercase key");
+  assert.deepEqual(b.orderTags(uni, ["gym", "meme"]).map((u) => u.label), ["gym", "Meme", "Bench", "Church"], "recent first, in recent order, case-insensitive");
+  assert.deepEqual(b.orderTags(uni, []).map((u) => u.label), ["Bench", "Church", "gym", "Meme"], "no recents → unchanged");
+  assert.deepEqual(b.orderTags(uni, ["nope"]).map((u) => u.label), ["Bench", "Church", "gym", "Meme"], "a recent tag no longer in the library changes nothing");
+  let r = b.pushRecent([], "#Bench");
+  assert.deepEqual(r, ["Bench"]);
+  r = b.pushRecent(r, "Meme");
+  assert.deepEqual(r, ["Meme", "Bench"], "newest first");
+  r = b.pushRecent(r, "bench");
+  assert.deepEqual(r, ["bench", "Meme"], "re-use moves it to the front, one copy");
+  assert.deepEqual(b.pushRecent(["a", "b", "c"], "d", 3), ["d", "a", "b"], "capped");
+  assert.deepEqual(b.pushRecent(["a"], "  "), ["a"], "blank changes nothing");
+});

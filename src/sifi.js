@@ -36,7 +36,10 @@ const SIFI_DEFAULTS = {
   autoAdvance: true, // owner ask 2026-09-05: a visible, remembered toggle
   playerPlayableOnly: true, // the pop-up and TV play only what plays on this device
   streamRemote: true, // owner 2026-09-05 ("if streaming fixes it then do that"): no local copy → stream from Instagram
+  tagAfterCapture: true, // owner 2026-09-11: a share-sheet save opens the new item with the tag sheet up
+  recentTags: [], // the tags used last, newest first — they lead the sheet
 };
+const RECENT_TAGS_MAX = 8;
 const THUMB_LIVE_MAX = 24;
 const WATCH_DWELL_MS = 3000;
 const TICK_MS = 500;
@@ -666,6 +669,217 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     return b;
   }
 
+  // ---- the tag sheet -----------------------------------------------------------
+  // One builder for every place tags are edited: the players (phone pop-up, TV),
+  // the desktop dialog after a share-sheet save, and the Add item dialog's chips.
+  // Every tag the library knows as a tap-to-toggle chip with its count, recently
+  // used tags first, plus a field for a new one. Each tap writes the note's
+  // frontmatter the way upstream's pane does.
+  //   o = { app, plugin, view, item, mode: "bottom" | "top" | "modal", onChange, onDone }
+  function buildTagSheet(host, o) {
+    const plugin = o.plugin;
+    const item = o.item;
+    const sheet = host.createDiv({ cls: "mlog-tv__sheet" + (o.mode === "top" ? " mlog-tv__sheet--top" : o.mode === "modal" ? " mlog-tv__sheet--modal" : "") });
+    sheet.addEventListener("click", (e) => e.stopPropagation());
+    const head = sheet.createDiv({ cls: "mlog-tv__sheet-head" });
+    head.createDiv({ cls: "mlog-tv__sheet-title", text: o.title || "Tags" });
+    const done = head.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-done", text: "Done" });
+    done.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (o.onDone) o.onDone();
+    });
+    const form = sheet.createDiv({ cls: "mlog-tv__sheet-form" });
+    const input = form.createEl("input", {
+      cls: "mlog-tv__sheet-input",
+      type: "text",
+      placeholder: "New tag",
+      attr: { autocapitalize: "none", autocorrect: "off", enterkeyhint: "done", "aria-label": "New tag" },
+    });
+    const add = form.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-add", text: "Add" });
+    const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
+    const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
+    const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
+    input.addEventListener("focus", () => {
+      // iOS may scroll the page to "reveal" the field; keep a fixed overlay put
+      setTimeout(() => {
+        if (window.scrollY) window.scrollTo(0, 0);
+      }, 60);
+    });
+    const paint = () => {
+      chips.empty();
+      // Counts across the library, with this item's live tags in place of its listed copy.
+      const items = ((o.view && o.view.items) || o.items || []).map((x) => (x && x.id === item.id ? item : x));
+      const uni = browse.orderTags(browse.tagUniverse(items), plugin.settings.recentTags);
+      hint.setText(uni.length ? "Tap a tag to add or remove it. Counts are across the library; the ones you used last come first." : "No tags yet — type one above. Your own categories, not hashtags.");
+      for (const u of uni) {
+        const on = browse.hasTag(item.tags, u.label);
+        const c = chips.createEl("button", {
+          cls: "mlog-tag mlog-tv__sheet-chip" + (on ? " mlog-tag--on" : ""),
+          text: `${u.label} · ${u.n}`,
+          attr: { "aria-pressed": String(on) },
+        });
+        c.addEventListener("click", (e) => {
+          e.stopPropagation();
+          apply(u.label);
+        });
+      }
+    };
+    const remember = (raw) => {
+      plugin.settings.recentTags = browse.pushRecent(plugin.settings.recentTags, raw, RECENT_TAGS_MAX);
+      plugin.saveSettings();
+    };
+    const apply = async (raw) => {
+      const adding = !browse.hasTag(item.tags, raw);
+      const next = browse.toggleTag(item.tags, raw);
+      item.tags = next;
+      item.tagsLow = next.map((t) => t.toLowerCase());
+      // The live refresh re-lists items as new objects; keep the library's copy of
+      // this item (and the pane's selection) in step so nothing shows stale tags.
+      const sync = (x) => {
+        if (x && x !== item && x.id === item.id) {
+          x.tags = next.slice();
+          x.tagsLow = item.tagsLow.slice();
+        }
+      };
+      if (o.view) {
+        sync(o.view.selected);
+        (o.view.items || []).forEach(sync);
+      }
+      if (adding) remember(raw);
+      paint();
+      if (o.onChange) o.onChange(item);
+      try {
+        await plugin.updateTags(item, item.tags);
+        status.setText("");
+      } catch (e) {
+        status.setText(`Couldn't save that tag: ${(e && e.message) || e}`);
+      }
+    };
+    const submit = () => {
+      const raw = input.value;
+      input.value = "";
+      if (browse.normalizeTag(raw) && !browse.hasTag(item.tags, raw)) apply(raw);
+      input.focus();
+    };
+    add.addEventListener("click", (e) => {
+      e.stopPropagation();
+      submit();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      submit();
+    });
+    paint();
+    return { el: sheet, input, repaint: paint };
+  }
+
+  // The desktop's sheet after a share-sheet save: the same builder inside a modal.
+  class TagSheetModal extends Modal {
+    constructor(app, plugin, view, item) {
+      super(app);
+      this.plugin = plugin;
+      this.view = view;
+      this.item = item;
+    }
+
+    onOpen() {
+      if (this.modalEl) this.modalEl.addClass("mlog-tagsheet");
+      if (this.titleEl) this.titleEl.setText("Tags for the new item");
+      this.contentEl.empty();
+      this.contentEl.createDiv({ cls: "mlog__empty-sub", text: this.item.title });
+      const built = buildTagSheet(this.contentEl, {
+        app: this.app,
+        plugin: this.plugin,
+        view: this.view,
+        item: this.item,
+        mode: "modal",
+        onDone: () => this.close(),
+      });
+      setTimeout(() => built.input.focus(), 50);
+    }
+
+    onClose() {
+      this.contentEl.empty();
+      if (this.view && this.view.gridEl) {
+        withScrollKept(this.view.gridEl, () => {
+          this.view.renderGrid();
+          this.view.renderDetail();
+        });
+      }
+    }
+  }
+
+  // The Add item dialog: tap-to-toggle chips under upstream's comma-separated
+  // tags field, kept in step with the field both ways.
+  function decorateAddModal(modal, contentEl, tagsInput) {
+    const plugin = modal.plugin;
+    if (!plugin || !contentEl || !tagsInput) return;
+    const row = contentEl.createDiv({ cls: "mlog-add__chips" });
+    if (tagsInput.nextSibling) contentEl.insertBefore(row, tagsInput.nextSibling);
+    const fieldTags = () => tagsInput.value.split(",").map((t) => browse.normalizeTag(t)).filter(Boolean);
+    let uni = [];
+    const paint = () => {
+      row.empty();
+      const cur = fieldTags();
+      for (const u of uni) {
+        const on = browse.hasTag(cur, u.label);
+        const c = row.createEl("button", { cls: "mlog-tag" + (on ? " mlog-tag--on" : ""), text: `${u.label} · ${u.n}`, attr: { type: "button", "aria-pressed": String(on) } });
+        c.addEventListener("click", () => {
+          tagsInput.value = browse.toggleTag(fieldTags(), u.label).join(", ");
+          paint();
+        });
+      }
+    };
+    tagsInput.addEventListener("input", paint);
+    Promise.resolve()
+      .then(() => plugin.listItems())
+      .then((items) => {
+        uni = browse.orderTags(browse.tagUniverse(items), plugin.settings.recentTags);
+        paint();
+      })
+      .catch(() => {});
+  }
+
+  // The new note's frontmatter may not be parsed the instant it is created.
+  function waitForCache(app, file, maxMs) {
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const c = app.metadataCache.getFileCache(file);
+        if (c && c.frontmatter && c.frontmatter.media_id) return resolve(true);
+        if (Date.now() - t0 > (maxMs || 4000)) return resolve(false);
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
+  }
+
+  // A share-sheet save just landed (owner 2026-09-11: tag at the time of
+  // importing): open the library on the new item with the tag sheet up — the
+  // phone's pop-up, the desktop's pane plus a dialog. The item is saved either
+  // way; the sheet is optional. Setting "Ask for tags after a share-sheet save".
+  async function afterCapture(plugin, file) {
+    if (!file || plugin.settings.tagAfterCapture === false) return;
+    try {
+      await plugin.activateView();
+      const leaf = plugin.app.workspace.getLeavesOfType("media-log-library")[0];
+      const view = leaf && leaf.view;
+      if (!view || typeof view.openForTags !== "function") return;
+      await waitForCache(plugin.app, file, 4000);
+      const find = () => (view.items || []).find((i) => i.file && i.file.path === file.path);
+      let item = find();
+      if (!item) {
+        await view.refreshItems();
+        item = find();
+      }
+      if (!item) return;
+      await view.openForTags(item);
+    } catch (e) {
+      console.error("Media Log: after-capture tagging failed", e);
+    }
+  }
+
   // ---- the player: TV mode and the phone pop-up --------------------------------
   // Mounted on document.body: Obsidian 1.13 applies contain:strict to leaves,
   // which hijacks position:fixed inside a view. "tv" loops the current
@@ -1172,87 +1386,21 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.hold = true;
       this.adv = null;
       this.showControls();
-      const sheet = this.overlay.createDiv({ cls: "mlog-tv__sheet" });
-      this.sheet = sheet;
-      sheet.addEventListener("click", (e) => e.stopPropagation());
-      const head = sheet.createDiv({ cls: "mlog-tv__sheet-head" });
-      head.createDiv({ cls: "mlog-tv__sheet-title", text: "Tags" });
-      const done = head.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-done", text: "Done" });
-      done.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.closeTags();
+      // On a phone the sheet hangs from the top (owner 2026-09-11: "the keyboard
+      // perfectly covers the tag screen" — Obsidian's iOS webview gives no usable
+      // viewport signal when the keyboard rises, and no keyboard reaches the top).
+      const built = buildTagSheet(this.overlay, {
+        app: this.app,
+        plugin: this.plugin,
+        view: this.view,
+        item,
+        mode: isPhone() ? "top" : "bottom",
+        onChange: () => {
+          if (this.paintTagLine) this.paintTagLine();
+        },
+        onDone: () => this.closeTags(),
       });
-      const form = sheet.createDiv({ cls: "mlog-tv__sheet-form" });
-      const input = form.createEl("input", {
-        cls: "mlog-tv__sheet-input",
-        type: "text",
-        placeholder: "New tag",
-        attr: { autocapitalize: "none", autocorrect: "off", enterkeyhint: "done", "aria-label": "New tag" },
-      });
-      const add = form.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-add", text: "Add" });
-      const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
-      const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
-      const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
-      // The phone keyboard covers the bottom of the screen, sheet included (owner
-      // 2026-09-11: "the keyboard perfectly covers the tag screen"). Obsidian's iOS
-      // webview gives no usable viewport signal when the keyboard rises, so on a
-      // phone the sheet hangs from the top of the screen instead, where no keyboard
-      // reaches; the reel shows beneath it. Desktop TV mode keeps it at the bottom.
-      if (isPhone()) sheet.classList.add("mlog-tv__sheet--top");
-      input.addEventListener("focus", () => {
-        // iOS may still scroll the page to "reveal" the field; keep the overlay put
-        setTimeout(() => {
-          if (window.scrollY) window.scrollTo(0, 0);
-        }, 60);
-      });
-      const paint = () => {
-        chips.empty();
-        // Counts across the library, with this item's live tags in place of its listed copy.
-        const items = (this.view.items || []).map((x) => (x && x.id === item.id ? item : x));
-        const uni = browse.tagUniverse(items);
-        hint.setText(uni.length ? "Tap a tag to add or remove it. Counts are across the library." : "No tags yet — type one above. Your own categories, not hashtags.");
-        for (const u of uni) {
-          const on = browse.hasTag(item.tags, u.label);
-          const c = chips.createEl("button", {
-            cls: "mlog-tag mlog-tv__sheet-chip" + (on ? " mlog-tag--on" : ""),
-            text: `${u.label} · ${u.n}`,
-            attr: { "aria-pressed": String(on) },
-          });
-          c.addEventListener("click", (e) => {
-            e.stopPropagation();
-            apply(u.label);
-          });
-        }
-      };
-      const apply = async (raw) => {
-        const next = browse.toggleTag(item.tags, raw);
-        item.tags = next;
-        item.tagsLow = next.map((t) => t.toLowerCase());
-        paint();
-        if (this.paintTagLine) this.paintTagLine();
-        try {
-          await this.plugin.updateTags(item, item.tags);
-          status.setText("");
-        } catch (e) {
-          status.setText(`Couldn't save that tag: ${(e && e.message) || e}`);
-        }
-      };
-      const submit = () => {
-        const raw = input.value;
-        input.value = "";
-        if (browse.normalizeTag(raw) && !browse.hasTag(item.tags, raw)) apply(raw);
-        input.focus();
-      };
-      add.addEventListener("click", (e) => {
-        e.stopPropagation();
-        submit();
-      });
-      input.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        submit();
-      });
-      paint();
+      this.sheet = built.el;
     }
 
     closeTags() {
@@ -1651,6 +1799,18 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
       this.tv.open();
     }
 
+    // The new item, ready to tag: the phone's pop-up with the sheet up, or the
+    // desktop pane plus the sheet as a dialog.
+    async openForTags(item) {
+      if (isPhone()) {
+        this.openModal(item);
+        if (this.tv) this.tv.openTags(item);
+        return;
+      }
+      await this.selectItem(item);
+      new TagSheetModal(this.app, this.plugin, this, item).open();
+    }
+
     openTv() {
       const list = this.tvList(this.tvMode);
       if (!list.length) {
@@ -2033,6 +2193,15 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
           })
         );
       new Setting(c)
+        .setName("Ask for tags after a share-sheet save")
+        .setDesc("When a link arrives from the Save to Media Log shortcut, open the new item with the tag sheet up. Off: save silently, as before.")
+        .addToggle((t) =>
+          t.setValue(s.tagAfterCapture !== false).onChange(async (v) => {
+            s.tagAfterCapture = v;
+            await this.plugin.saveSettings();
+          })
+        );
+      new Setting(c)
         .setName("Poster frames")
         .setDesc("On desktop, grab a frame from each local video that has no screenshot and use it as the thumbnail.")
         .addToggle((t) =>
@@ -2081,6 +2250,10 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     PosterFactory,
     StreamResolver,
     buildMedia,
+    buildTagSheet,
+    TagSheetModal,
+    decorateAddModal,
+    afterCapture,
     loadCaptions,
     keepOne,
     thumbSrc,

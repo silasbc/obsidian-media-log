@@ -217,3 +217,9 @@
 /* 1.4.0-sifi.12: on a phone the tag sheet hangs from the top — the keyboard owns the bottom */
 .mlog-tv__sheet--top { top: calc(6px + env(safe-area-inset-top)); bottom: auto; max-height: 50%; border-radius: 0 0 16px 16px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); animation: mlog-sheet-down 0.22s ease-out; }
 @keyframes mlog-sheet-down { from { transform: translateY(-48px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* 1.4.0-sifi.13: tags at import — the sheet as a desktop dialog, chips in the Add dialog */
+.mlog-tv__sheet--modal { position: static; max-height: none; overflow: visible; box-shadow: none; padding: 0.4rem 0 0; border-radius: 0; background: transparent; animation: none; }
+.mlog-tagsheet .modal-content { padding-top: 0.2rem; }
+.mlog-add__chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -0.1rem 0 0.6rem; }
+.mlog-add__chips:empty { display: none; }
+.mlog-add__chips .mlog-tag { min-height: 30px; }

@@ -122,7 +122,7 @@ module.exports = class MediaLogPlugin extends Plugin {
     this.addCommand({ id: "add-item", name: "Add media item from URL", callback: () => new AddItemModal(this.app, this).open() });
     this.registerObsidianProtocolHandler("media-log", (params) => {
       if (params && params.url) {
-        new AddItemModal(this.app, this, null, {
+        new AddItemModal(this.app, this, (file) => sifi.afterCapture(this, file), { // [sifi] tag the new item right away
           url: params.url,
           title: params.title || "",
           tags: params.tags || "",
@@ -611,6 +611,7 @@ class AddItemModal extends Modal {
     const urlInput = contentEl.createEl("input", { cls: "mlog-modal__input", type: "text", placeholder: "Paste a URL…" });
     const titleInput = contentEl.createEl("input", { cls: "mlog-modal__input", type: "text", placeholder: "Title (fetched automatically if empty)" });
     const tagsInput = contentEl.createEl("input", { cls: "mlog-modal__input", type: "text", placeholder: "Tags, comma separated (optional)" });
+    sifi.decorateAddModal(this, contentEl, tagsInput); // [sifi] tap-to-toggle chips under the field
     const status = contentEl.createDiv({ cls: "mlog-modal__status" });
     const row = contentEl.createDiv({ cls: "mlog-modal__row" });
     const save = row.createEl("button", { cls: "mod-cta", text: "Save" });
@@ -648,7 +649,7 @@ class AddItemModal extends Modal {
         });
         new Notice(`Media Log: saved ${file.basename}`);
         this.close();
-        if (this.onDone) this.onDone();
+        if (this.onDone) this.onDone(file); // [sifi] the created file rides along
       } catch (e) {
         save.disabled = false;
         status.setText(`Failed: ${e.message || e}`);

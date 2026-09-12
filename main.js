@@ -513,6 +513,27 @@ var require_browse = __commonJS({
       const i = list.findIndex((x) => x.toLowerCase() === low);
       return i >= 0 ? list.filter((_, j) => j !== i) : list.concat([t]);
     }
+    function orderTags(uni, recent) {
+      const list = (uni || []).slice();
+      const rank = /* @__PURE__ */ new Map();
+      (recent || []).forEach((t, i) => {
+        const k = safeStr(t).toLowerCase();
+        if (k && !rank.has(k)) rank.set(k, i);
+      });
+      return list.sort((a, b) => {
+        const ra = rank.has(a.key) ? rank.get(a.key) : Infinity;
+        const rb = rank.has(b.key) ? rank.get(b.key) : Infinity;
+        if (ra !== rb) return ra - rb;
+        return b.n - a.n || (a.key < b.key ? -1 : 1);
+      });
+    }
+    function pushRecent(recent, tag, max) {
+      const t = normalizeTag(tag);
+      const cap = max > 0 ? max : 8;
+      if (!t) return (recent || []).slice(0, cap);
+      const low = t.toLowerCase();
+      return [t].concat((recent || []).filter((x) => safeStr(x).toLowerCase() !== low)).slice(0, cap);
+    }
     module2.exports = {
       MONTHS,
       SORTS,
@@ -579,7 +600,9 @@ var require_browse = __commonJS({
       swipeIntent,
       normalizeTag,
       hasTag,
-      toggleTag
+      toggleTag,
+      orderTags,
+      pushRecent
     };
   }
 });
@@ -603,9 +626,14 @@ var require_sifi = __commonJS({
       // owner ask 2026-09-05: a visible, remembered toggle
       playerPlayableOnly: true,
       // the pop-up and TV play only what plays on this device
-      streamRemote: true
+      streamRemote: true,
       // owner 2026-09-05 ("if streaming fixes it then do that"): no local copy → stream from Instagram
+      tagAfterCapture: true,
+      // owner 2026-09-11: a share-sheet save opens the new item with the tag sheet up
+      recentTags: []
+      // the tags used last, newest first — they lead the sheet
     };
+    var RECENT_TAGS_MAX = 8;
     var THUMB_LIVE_MAX = 24;
     var WATCH_DWELL_MS = 3e3;
     var TICK_MS = 500;
@@ -1154,6 +1182,189 @@ var require_sifi = __commonJS({
         });
         return b;
       }
+      function buildTagSheet(host, o) {
+        const plugin = o.plugin;
+        const item = o.item;
+        const sheet = host.createDiv({ cls: "mlog-tv__sheet" + (o.mode === "top" ? " mlog-tv__sheet--top" : o.mode === "modal" ? " mlog-tv__sheet--modal" : "") });
+        sheet.addEventListener("click", (e) => e.stopPropagation());
+        const head = sheet.createDiv({ cls: "mlog-tv__sheet-head" });
+        head.createDiv({ cls: "mlog-tv__sheet-title", text: o.title || "Tags" });
+        const done = head.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-done", text: "Done" });
+        done.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (o.onDone) o.onDone();
+        });
+        const form = sheet.createDiv({ cls: "mlog-tv__sheet-form" });
+        const input = form.createEl("input", {
+          cls: "mlog-tv__sheet-input",
+          type: "text",
+          placeholder: "New tag",
+          attr: { autocapitalize: "none", autocorrect: "off", enterkeyhint: "done", "aria-label": "New tag" }
+        });
+        const add = form.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-add", text: "Add" });
+        const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
+        const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
+        const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
+        input.addEventListener("focus", () => {
+          setTimeout(() => {
+            if (window.scrollY) window.scrollTo(0, 0);
+          }, 60);
+        });
+        const paint = () => {
+          chips.empty();
+          const items = (o.view && o.view.items || o.items || []).map((x) => x && x.id === item.id ? item : x);
+          const uni = browse2.orderTags(browse2.tagUniverse(items), plugin.settings.recentTags);
+          hint.setText(uni.length ? "Tap a tag to add or remove it. Counts are across the library; the ones you used last come first." : "No tags yet \u2014 type one above. Your own categories, not hashtags.");
+          for (const u of uni) {
+            const on = browse2.hasTag(item.tags, u.label);
+            const c = chips.createEl("button", {
+              cls: "mlog-tag mlog-tv__sheet-chip" + (on ? " mlog-tag--on" : ""),
+              text: `${u.label} \xB7 ${u.n}`,
+              attr: { "aria-pressed": String(on) }
+            });
+            c.addEventListener("click", (e) => {
+              e.stopPropagation();
+              apply(u.label);
+            });
+          }
+        };
+        const remember = (raw) => {
+          plugin.settings.recentTags = browse2.pushRecent(plugin.settings.recentTags, raw, RECENT_TAGS_MAX);
+          plugin.saveSettings();
+        };
+        const apply = async (raw) => {
+          const adding = !browse2.hasTag(item.tags, raw);
+          const next = browse2.toggleTag(item.tags, raw);
+          item.tags = next;
+          item.tagsLow = next.map((t) => t.toLowerCase());
+          const sync = (x) => {
+            if (x && x !== item && x.id === item.id) {
+              x.tags = next.slice();
+              x.tagsLow = item.tagsLow.slice();
+            }
+          };
+          if (o.view) {
+            sync(o.view.selected);
+            (o.view.items || []).forEach(sync);
+          }
+          if (adding) remember(raw);
+          paint();
+          if (o.onChange) o.onChange(item);
+          try {
+            await plugin.updateTags(item, item.tags);
+            status.setText("");
+          } catch (e) {
+            status.setText(`Couldn't save that tag: ${e && e.message || e}`);
+          }
+        };
+        const submit = () => {
+          const raw = input.value;
+          input.value = "";
+          if (browse2.normalizeTag(raw) && !browse2.hasTag(item.tags, raw)) apply(raw);
+          input.focus();
+        };
+        add.addEventListener("click", (e) => {
+          e.stopPropagation();
+          submit();
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          submit();
+        });
+        paint();
+        return { el: sheet, input, repaint: paint };
+      }
+      class TagSheetModal extends Modal2 {
+        constructor(app, plugin, view, item) {
+          super(app);
+          this.plugin = plugin;
+          this.view = view;
+          this.item = item;
+        }
+        onOpen() {
+          if (this.modalEl) this.modalEl.addClass("mlog-tagsheet");
+          if (this.titleEl) this.titleEl.setText("Tags for the new item");
+          this.contentEl.empty();
+          this.contentEl.createDiv({ cls: "mlog__empty-sub", text: this.item.title });
+          const built = buildTagSheet(this.contentEl, {
+            app: this.app,
+            plugin: this.plugin,
+            view: this.view,
+            item: this.item,
+            mode: "modal",
+            onDone: () => this.close()
+          });
+          setTimeout(() => built.input.focus(), 50);
+        }
+        onClose() {
+          this.contentEl.empty();
+          if (this.view && this.view.gridEl) {
+            withScrollKept(this.view.gridEl, () => {
+              this.view.renderGrid();
+              this.view.renderDetail();
+            });
+          }
+        }
+      }
+      function decorateAddModal(modal, contentEl, tagsInput) {
+        const plugin = modal.plugin;
+        if (!plugin || !contentEl || !tagsInput) return;
+        const row = contentEl.createDiv({ cls: "mlog-add__chips" });
+        if (tagsInput.nextSibling) contentEl.insertBefore(row, tagsInput.nextSibling);
+        const fieldTags = () => tagsInput.value.split(",").map((t) => browse2.normalizeTag(t)).filter(Boolean);
+        let uni = [];
+        const paint = () => {
+          row.empty();
+          const cur = fieldTags();
+          for (const u of uni) {
+            const on = browse2.hasTag(cur, u.label);
+            const c = row.createEl("button", { cls: "mlog-tag" + (on ? " mlog-tag--on" : ""), text: `${u.label} \xB7 ${u.n}`, attr: { type: "button", "aria-pressed": String(on) } });
+            c.addEventListener("click", () => {
+              tagsInput.value = browse2.toggleTag(fieldTags(), u.label).join(", ");
+              paint();
+            });
+          }
+        };
+        tagsInput.addEventListener("input", paint);
+        Promise.resolve().then(() => plugin.listItems()).then((items) => {
+          uni = browse2.orderTags(browse2.tagUniverse(items), plugin.settings.recentTags);
+          paint();
+        }).catch(() => {
+        });
+      }
+      function waitForCache(app, file, maxMs) {
+        return new Promise((resolve) => {
+          const t0 = Date.now();
+          const tick = () => {
+            const c = app.metadataCache.getFileCache(file);
+            if (c && c.frontmatter && c.frontmatter.media_id) return resolve(true);
+            if (Date.now() - t0 > (maxMs || 4e3)) return resolve(false);
+            setTimeout(tick, 100);
+          };
+          tick();
+        });
+      }
+      async function afterCapture(plugin, file) {
+        if (!file || plugin.settings.tagAfterCapture === false) return;
+        try {
+          await plugin.activateView();
+          const leaf = plugin.app.workspace.getLeavesOfType("media-log-library")[0];
+          const view = leaf && leaf.view;
+          if (!view || typeof view.openForTags !== "function") return;
+          await waitForCache(plugin.app, file, 4e3);
+          const find = () => (view.items || []).find((i) => i.file && i.file.path === file.path);
+          let item = find();
+          if (!item) {
+            await view.refreshItems();
+            item = find();
+          }
+          if (!item) return;
+          await view.openForTags(item);
+        } catch (e) {
+          console.error("Media Log: after-capture tagging failed", e);
+        }
+      }
       class TvPlayer {
         constructor(view, list, idx, opts) {
           this.view = view;
@@ -1629,80 +1840,18 @@ var require_sifi = __commonJS({
           this.hold = true;
           this.adv = null;
           this.showControls();
-          const sheet = this.overlay.createDiv({ cls: "mlog-tv__sheet" });
-          this.sheet = sheet;
-          sheet.addEventListener("click", (e) => e.stopPropagation());
-          const head = sheet.createDiv({ cls: "mlog-tv__sheet-head" });
-          head.createDiv({ cls: "mlog-tv__sheet-title", text: "Tags" });
-          const done = head.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-done", text: "Done" });
-          done.addEventListener("click", (e) => {
-            e.stopPropagation();
-            this.closeTags();
+          const built = buildTagSheet(this.overlay, {
+            app: this.app,
+            plugin: this.plugin,
+            view: this.view,
+            item,
+            mode: isPhone() ? "top" : "bottom",
+            onChange: () => {
+              if (this.paintTagLine) this.paintTagLine();
+            },
+            onDone: () => this.closeTags()
           });
-          const form = sheet.createDiv({ cls: "mlog-tv__sheet-form" });
-          const input = form.createEl("input", {
-            cls: "mlog-tv__sheet-input",
-            type: "text",
-            placeholder: "New tag",
-            attr: { autocapitalize: "none", autocorrect: "off", enterkeyhint: "done", "aria-label": "New tag" }
-          });
-          const add = form.createEl("button", { cls: "mlog-tv__btn mlog-tv__sheet-add", text: "Add" });
-          const hint = sheet.createDiv({ cls: "mlog-tv__sheet-hint" });
-          const chips = sheet.createDiv({ cls: "mlog-tv__sheet-chips" });
-          const status = sheet.createDiv({ cls: "mlog-tv__sheet-status" });
-          if (isPhone()) sheet.classList.add("mlog-tv__sheet--top");
-          input.addEventListener("focus", () => {
-            setTimeout(() => {
-              if (window.scrollY) window.scrollTo(0, 0);
-            }, 60);
-          });
-          const paint = () => {
-            chips.empty();
-            const items = (this.view.items || []).map((x) => x && x.id === item.id ? item : x);
-            const uni = browse2.tagUniverse(items);
-            hint.setText(uni.length ? "Tap a tag to add or remove it. Counts are across the library." : "No tags yet \u2014 type one above. Your own categories, not hashtags.");
-            for (const u of uni) {
-              const on = browse2.hasTag(item.tags, u.label);
-              const c = chips.createEl("button", {
-                cls: "mlog-tag mlog-tv__sheet-chip" + (on ? " mlog-tag--on" : ""),
-                text: `${u.label} \xB7 ${u.n}`,
-                attr: { "aria-pressed": String(on) }
-              });
-              c.addEventListener("click", (e) => {
-                e.stopPropagation();
-                apply(u.label);
-              });
-            }
-          };
-          const apply = async (raw) => {
-            const next = browse2.toggleTag(item.tags, raw);
-            item.tags = next;
-            item.tagsLow = next.map((t) => t.toLowerCase());
-            paint();
-            if (this.paintTagLine) this.paintTagLine();
-            try {
-              await this.plugin.updateTags(item, item.tags);
-              status.setText("");
-            } catch (e) {
-              status.setText(`Couldn't save that tag: ${e && e.message || e}`);
-            }
-          };
-          const submit = () => {
-            const raw = input.value;
-            input.value = "";
-            if (browse2.normalizeTag(raw) && !browse2.hasTag(item.tags, raw)) apply(raw);
-            input.focus();
-          };
-          add.addEventListener("click", (e) => {
-            e.stopPropagation();
-            submit();
-          });
-          input.addEventListener("keydown", (e) => {
-            if (e.key !== "Enter") return;
-            e.preventDefault();
-            submit();
-          });
-          paint();
+          this.sheet = built.el;
         }
         closeTags() {
           if (this.sheet) this.sheet.remove();
@@ -2055,6 +2204,17 @@ var require_sifi = __commonJS({
           this.tv = new TvPlayer(this, list, idx, { mode: "modal" });
           this.tv.open();
         }
+        // The new item, ready to tag: the phone's pop-up with the sheet up, or the
+        // desktop pane plus the sheet as a dialog.
+        async openForTags(item) {
+          if (isPhone()) {
+            this.openModal(item);
+            if (this.tv) this.tv.openTags(item);
+            return;
+          }
+          await this.selectItem(item);
+          new TagSheetModal(this.app, this.plugin, this, item).open();
+        }
         openTv() {
           const list = this.tvList(this.tvMode);
           if (!list.length) {
@@ -2399,6 +2559,12 @@ var require_sifi = __commonJS({
               await this.plugin.saveSettings();
             })
           );
+          new Setting2(c).setName("Ask for tags after a share-sheet save").setDesc("When a link arrives from the Save to Media Log shortcut, open the new item with the tag sheet up. Off: save silently, as before.").addToggle(
+            (t) => t.setValue(s.tagAfterCapture !== false).onChange(async (v) => {
+              s.tagAfterCapture = v;
+              await this.plugin.saveSettings();
+            })
+          );
           new Setting2(c).setName("Poster frames").setDesc("On desktop, grab a frame from each local video that has no screenshot and use it as the thumbnail.").addToggle(
             (t) => t.setValue(!!s.posterFrames).onChange(async (v) => {
               s.posterFrames = v;
@@ -2435,6 +2601,10 @@ var require_sifi = __commonJS({
         PosterFactory,
         StreamResolver,
         buildMedia,
+        buildTagSheet,
+        TagSheetModal,
+        decorateAddModal,
+        afterCapture,
         loadCaptions,
         keepOne,
         thumbSrc,
@@ -2545,7 +2715,8 @@ module.exports = class MediaLogPlugin extends Plugin {
     this.addCommand({ id: "add-item", name: "Add media item from URL", callback: () => new AddItemModal(this.app, this).open() });
     this.registerObsidianProtocolHandler("media-log", (params) => {
       if (params && params.url) {
-        new AddItemModal(this.app, this, null, {
+        new AddItemModal(this.app, this, (file) => sifi.afterCapture(this, file), {
+          // [sifi] tag the new item right away
           url: params.url,
           title: params.title || "",
           tags: params.tags || "",
@@ -2994,6 +3165,7 @@ var AddItemModal = class extends Modal {
     const urlInput = contentEl.createEl("input", { cls: "mlog-modal__input", type: "text", placeholder: "Paste a URL\u2026" });
     const titleInput = contentEl.createEl("input", { cls: "mlog-modal__input", type: "text", placeholder: "Title (fetched automatically if empty)" });
     const tagsInput = contentEl.createEl("input", { cls: "mlog-modal__input", type: "text", placeholder: "Tags, comma separated (optional)" });
+    sifi.decorateAddModal(this, contentEl, tagsInput);
     const status = contentEl.createDiv({ cls: "mlog-modal__status" });
     const row = contentEl.createDiv({ cls: "mlog-modal__row" });
     const save = row.createEl("button", { cls: "mod-cta", text: "Save" });
@@ -3031,7 +3203,7 @@ var AddItemModal = class extends Modal {
         });
         new Notice(`Media Log: saved ${file.basename}`);
         this.close();
-        if (this.onDone) this.onDone();
+        if (this.onDone) this.onDone(file);
       } catch (e) {
         save.disabled = false;
         status.setText(`Failed: ${e.message || e}`);
