@@ -47,6 +47,10 @@ Still an idea, never built: Embed Lab, a test screen to find the best-playing em
 
 ## Changelog (Sifi's edition)
 
+### 1.4.0-sifi.16 — 2026-09-11
+
+- After a share-sheet save, the tag sheet no longer depends on Obsidian's metadata index having seen the new note (on the phone it can lag by seconds and the sheet silently never opened): the note is read directly when the index lags, and every remaining failure says so in a Notice.
+
 ### 1.4.0-sifi.15 — 2026-09-11
 
 - A share-sheet save waits at most 4 s for the page's title (`fetchMetaFast`, one hook in the Add dialog). Instagram's page from the phone could hang for a minute, and the tag sheet only comes after the save (owner: "it fills the link but doesn't go from there"). On a timeout the note is written with the fallback title and the real title is patched in when the page answers (`patchLateTitle`).

@@ -939,20 +939,90 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
   // item as a modal — no dependence on the library view, which Obsidian mobile
   // may rebuild right after a share-sheet launch. The item is saved either way;
   // the sheet is optional. Setting "Ask for tags after a share-sheet save".
+  // The metadata index can lag a fresh note by seconds on the phone; read the
+  // note itself when it does, so the sheet never depends on the index.
+  async function itemFromFile(app, file) {
+    try {
+      const raw = await app.vault.read(file);
+      const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+      const fm = {};
+      if (m) {
+        for (const line of m[1].split(/\r?\n/)) {
+          const k = /^([a-z_]+):\s*(.*)$/.exec(line);
+          if (!k) continue;
+          let v = k[2].trim();
+          if (/^\[.*\]$/.test(v)) v = v.slice(1, -1).split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean);
+          else v = v.replace(/^"|"$/g, "").replace(/\\"/g, '"');
+          fm[k[1]] = v;
+        }
+      }
+      if (!fm.media_id) return null;
+      const item = {
+        file,
+        id: String(fm.media_id),
+        platform: fm.platform || "Web",
+        title: fm.title || file.basename,
+        creator: fm.creator || "",
+        sourceUrl: fm.source_url || "",
+        canonicalUrl: fm.canonical_url || "",
+        capturedAt: String(fm.captured_at || ""),
+        screenshot: fm.screenshot || "",
+        video: fm.video || "",
+        embedUrl: fm.embed_url || "",
+        watched: false,
+        starred: false,
+        tags: Array.isArray(fm.tags) ? fm.tags.map(String) : [],
+      };
+      browse.enrichItem(item, fm);
+      return item;
+    } catch {
+      return null;
+    }
+  }
+
+  // A share-sheet save just landed (owner 2026-09-11: tag at the time of
+  // importing): once the workspace has settled, open the tag sheet for the new
+  // item as a modal — no dependence on the library view, which Obsidian mobile
+  // may rebuild right after a share-sheet launch. The item is saved either way;
+  // the sheet is optional. Setting "Ask for tags after a share-sheet save".
   async function afterCapture(plugin, file) {
     if (!file || plugin.settings.tagAfterCapture === false) return;
     try {
-      await waitForCache(plugin.app, file, 4000);
-      const items = await plugin.listItems();
-      const item = items.find((i) => i.file && i.file.path === file.path);
-      if (!item) return;
+      const indexed = await waitForCache(plugin.app, file, 3000);
+      let items = [];
+      let item = null;
+      if (indexed) {
+        items = await plugin.listItems();
+        item = items.find((i) => i.file && i.file.path === file.path) || null;
+      }
+      if (!item) {
+        item = await itemFromFile(plugin.app, file);
+        if (!items.length) {
+          try {
+            items = await plugin.listItems();
+          } catch {}
+        }
+      }
+      if (!item) {
+        new Notice("Media Log: saved, but the tag sheet couldn't find the new note");
+        return;
+      }
       const leaf = plugin.app.workspace.getLeavesOfType("media-log-library")[0];
       const view = (leaf && leaf.view) || null;
-      const open = () => setTimeout(() => new TagSheetModal(plugin.app, plugin, view, item, items).open(), 350);
+      const open = () =>
+        setTimeout(() => {
+          try {
+            new TagSheetModal(plugin.app, plugin, view, item, items).open();
+          } catch (e) {
+            console.error("Media Log: tag sheet failed to open", e);
+            new Notice(`Media Log: saved; tag sheet failed — ${(e && e.message) || e}`);
+          }
+        }, 350);
       if (typeof plugin.app.workspace.onLayoutReady === "function") plugin.app.workspace.onLayoutReady(open);
       else open();
     } catch (e) {
       console.error("Media Log: after-capture tagging failed", e);
+      new Notice(`Media Log: saved; couldn't open the tag sheet — ${(e && e.message) || e}`);
     }
   }
 
@@ -2330,6 +2400,7 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
     TagSheetModal,
     decorateAddModal,
     afterCapture,
+    itemFromFile,
     fetchMetaFast,
     patchLateTitle,
     loadCaptions,
