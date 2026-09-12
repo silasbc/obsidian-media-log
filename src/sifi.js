@@ -829,13 +829,16 @@ function build({ LibraryView, MediaLogSettingTab, DEFAULT_SETTINGS, hasTextSelec
         if (!st) return;
         const s = st;
         st = null;
+        const p = e.changedTouches && e.changedTouches[0];
+        const dx = p ? p.clientX - s.x : 0;
+        const dy = p ? p.clientY - s.y : 0;
+        // A flick so quick that no touchmove arrived (seen through iPhone Mirroring)
+        // is judged from its end point; a sideways drag is still not ours.
+        if (s.vertical === null) s.vertical = Math.abs(dy) > Math.abs(dx);
         if (!s.vertical) {
           reset();
           return;
         }
-        const p = e.changedTouches && e.changedTouches[0];
-        const dx = p ? p.clientX - s.x : 0;
-        const dy = p ? p.clientY - s.y : 0;
         const intent = browse.swipeIntent(dx, dy, Date.now() - s.t);
         reset();
         this.swipedAt = Date.now();

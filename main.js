@@ -1305,13 +1305,14 @@ var require_sifi = __commonJS({
             if (!st) return;
             const s = st;
             st = null;
+            const p = e.changedTouches && e.changedTouches[0];
+            const dx = p ? p.clientX - s.x : 0;
+            const dy = p ? p.clientY - s.y : 0;
+            if (s.vertical === null) s.vertical = Math.abs(dy) > Math.abs(dx);
             if (!s.vertical) {
               reset();
               return;
             }
-            const p = e.changedTouches && e.changedTouches[0];
-            const dx = p ? p.clientX - s.x : 0;
-            const dy = p ? p.clientY - s.y : 0;
             const intent = browse2.swipeIntent(dx, dy, Date.now() - s.t);
             reset();
             this.swipedAt = Date.now();
